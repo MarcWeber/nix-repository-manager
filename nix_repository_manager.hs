@@ -141,7 +141,7 @@ instance Repo DarcsRepoData where
     d <- tempDir
     rawSystemVerbose "cp" [ "-r", dir, d ]
     rawSystemVerbose "rm" [ "-fr", (d </> "_darcs") ]
-    rawSystemVerbose "tar" [  "cfz", destFile, "-C", d, "."]
+    rawSystemVerbose "tar" [  "cfz", destFile, "-C", takeDirectory d, "."]
     rawSystemVerbose "rm" [ "-fr", d ]
     return ()
 
