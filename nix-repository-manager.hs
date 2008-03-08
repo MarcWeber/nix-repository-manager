@@ -275,7 +275,7 @@ doWork (Config repoDir nixPublishDir repos) cmd args = do
 
 createHash :: FilePath -> HashType -> FilePath -> IO ()
 createHash dist hash dest = do
-  (in', out, err, ph) <- runInteractiveProcess "nix-hash" ["--type", (show hash), dist] Nothing Nothing
+  (in', out, err, ph) <- runInteractiveProcess "nix-hash" ["--type", (show hash),"--flat",  dist] Nothing Nothing
   h <- liftM ((!!0) . lines) $! hGetContents out
   ec <- waitForProcess ph
   mapM_ hClose [err, in']
