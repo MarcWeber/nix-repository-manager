@@ -113,13 +113,6 @@ class Repo r where
                 -> FilePath  -- repo directory 
                 -> FilePath -- target .tar.gz 
                 -> IO ()
-  createTarGz _ dir destFile = do
-    d <- tempDir
-    rawSystemVerbose "cp" [ "-r", dir, d ]
-    rawSystemVerbose "rm" [ "-fr", (d </> "_darcs") ]
-    rawSystemVerbose "tar" [  "cfz", destFile, "-C", takeDirectory d, takeFileName d]
-    rawSystemVerbose "rm" [ "-fr", d ]
-    return ()
 
   repoGet ::  r -> String -> IO ExitCode
   repoGet = repoUpdate
@@ -171,15 +164,29 @@ instance Repo DarcsRepoData where
 
   repoUpdate (DarcsRepoData _ _) dest = rawSystemVerbose "darcs" $ ["pull", "-a", "--repodir=" ++ dest ]
 
+  createTarGz _ dir destFile = do
+    d <- tempDir
+    rawSystemVerbose "cp" [ "-r", dir, d ]
+    rawSystemVerbose "rm" [ "-fr", (d </> "_darcs") ]
+    rawSystemVerbose "tar" [  "cfz", destFile, "-C", takeDirectory d, takeFileName d]
+    rawSystemVerbose "rm" [ "-fr", d ]
+    return ()
   -- system ["darcs", "get", "--partial"]
 
 -- SVN implementation
 instance Repo SVNRepoData where
- parseFromConfig map = do 
-   url <- lookup "url" map
-   return $ SVNRepoData url $ lookup "r" map
- repoGet (SVNRepoData url revision) dest = rawSystemVerbose "svn" $ ["checkout", url] ++ (maybe ["-rHEAD"] (\r -> ["-r" ++ r]) revision) ++ [dest]
+  parseFromConfig map = do 
+    url <- lookup "url" map
+    return $ SVNRepoData url $ lookup "r" map
+  repoGet (SVNRepoData url revision) dest = rawSystemVerbose "svn" $ ["checkout", url] ++ (maybe ["-rHEAD"] (\r -> ["-r" ++ r]) revision) ++ [dest]
 
+  createTarGz _ dir destFile = do
+    d <- tempDir
+    rawSystemVerbose "cp" [ "-r", dir, d ]
+    rawSystemVerbose "/bin/sh" [ "-c", "find -type d " ++ (show d) ++ " -name \"*.svn\" | rm -fr " ]
+    rawSystemVerbose "tar" [  "cfz", destFile, "-C", takeDirectory d, takeFileName d]
+    rawSystemVerbose "rm" [ "-fr", d ]
+    return ()
 -- git implementation 
 instance Repo GitRepoData where
   parseFromConfig map = do 
@@ -190,7 +197,13 @@ instance Repo GitRepoData where
     rawSystemVerbose "git" ["clone", url, dest]
   repoUpdate (GitRepoData url) dest =
     withCurrentDirectory dest $ rawSystemVerbose "git" [ "pull"]
-
+  createTarGz _ dir destFile = do
+    d <- tempDir
+    rawSystemVerbose "cp" [ "-r", dir, d ]
+    rawSystemVerbose "/bin/sh" [ "-c", "find -type d " ++ (show d) ++ " -name \"*.git\" | rm -fr " ]
+    rawSystemVerbose "tar" [  "cfz", destFile, "-C", takeDirectory d, takeFileName d]
+    rawSystemVerbose "rm" [ "-fr", d ]
+    return ()
 -- ========== helper functions ======================================= 
 createDirectoryIfMissingVerbose dir = do
   e <- doesDirectoryExist dir
@@ -269,7 +282,11 @@ createHash dist hash dest = do
   writeFile dest $ "\"" ++ h ++ "\""
 
 tempDir :: IO FilePath
-tempDir = return "/tmp/nix_repsoitory_manager_tmp_dir"
+tempDir = do
+  let d = "/tmp/nix_repsoitory_manager_tmp_dir"
+  de <- doesDirectoryExist d
+  when de $ rawSystemVerbose "rm" [ "-fr", d] >> return ()
+  return d
   -- t <- getTemporaryDirectory
   -- l <- filterM ( not . doesDirectoryExist) $ [ t </> "nix_repository_manager" ++ (show i) | i <- [1..] ]
   -- return $ head l
