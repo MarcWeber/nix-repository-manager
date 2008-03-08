@@ -200,7 +200,7 @@ instance Repo GitRepoData where
   createTarGz _ dir destFile = do
     d <- tempDir
     rawSystemVerbose "cp" [ "-r", dir, d ]
-    rawSystemVerbose "/bin/sh" [ "-c", "find -type d " ++ (show d) ++ " -name \"*.git\" | rm -fr " ]
+    rawSystemVerbose "rm" [ "-fr", d </> ".git" ]
     rawSystemVerbose "tar" [  "cfz", destFile, "-C", takeDirectory d, takeFileName d]
     rawSystemVerbose "rm" [ "-fr", d ]
     return ()
@@ -314,8 +314,8 @@ main = do
                print "warning: there is no proper error reporting right now!"
                config <- parseConfig configF
                case args of
-                ("--show-groups":_) -> print $ nub $ concat $ map (\(RepoInfo _ gs _ _) -> gs) (repos config)
-                ("--show-repos":_) -> print $ map (\(RepoInfo name _ _ _) -> name) (repos config)
+                ("--show-groups":_) -> putStrLn $ unwords $ nub $ concat $ map (\(RepoInfo _ gs _ _) -> gs) (repos config)
+                ("--show-repos":_) -> putStrLn $ unwords $ map (\(RepoInfo name _ _ _) -> name) (repos config)
                 ("--update":args) -> doWork config DWUpdate args
                 ("--publish":args) -> doWork config DWPublish args
                 ("--clean":_) -> clean config
