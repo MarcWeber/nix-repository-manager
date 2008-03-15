@@ -42,6 +42,7 @@ printUsage = putStrLn $ unlines
   , "usage:"
   , "--update  list of names or groups to update or all (TODO)"
   , "--publish upload repostiroy to mawercer.de and write bleeding-edge-fetch-info/name.nix file"
+  , "--update-then-publish list"
   , "--show-groups (TODO)"
   , "--show-repos (TODO)"
   , "--clean remove repositories no longer in config (TODO)"
@@ -91,6 +92,7 @@ repoName (RepoInfo n _ _ _) = n
 data Repository = 
     DarcsRepo DarcsRepoData
   | SVNRepo SVNRepoData
+  | CVSRepo CVSRepoData
   | GitRepo GitRepoData
   deriving (Show,Read)
 
@@ -100,6 +102,10 @@ data DarcsRepoData = DarcsRepoData String -- URL
 
 data SVNRepoData = SVNRepoData String -- URL 
                                (Maybe String) -- revision / Nothing = HEAD 
+  deriving (Show,Read)
+
+data CVSRepoData = CVSRepoData String -- cvs root (eg :pserver:anonymous@synergy2.cvs.sourceforge.net:/cvsroot/synergy2)
+                               String -- module
   deriving (Show,Read)
 
 data GitRepoData = GitRepoData String -- URL 
@@ -136,21 +142,25 @@ instance Repo RepoInfo where
 instance Repo Repository where
   createTarGz (DarcsRepo r ) b c = createTarGz r b c
   createTarGz (SVNRepo r ) b c = createTarGz r b c
+  createTarGz (CVSRepo r ) b c = createTarGz r b c
   createTarGz (GitRepo r ) b c = createTarGz r b c
   parseFromConfig map = do
     repoType <- lookup "type" map
     case repoType of
       "darcs" -> parseFromConfig map >>= return . DarcsRepo
       "svn" -> parseFromConfig map >>= return . SVNRepo
+      "cvs" -> parseFromConfig map >>= return . CVSRepo
       "git" -> parseFromConfig map >>= return . GitRepo
       _ -> Nothing
 
   repoGet (DarcsRepo r) = repoGet r
   repoGet (SVNRepo r) = repoGet r
+  repoGet (CVSRepo r) = repoGet r
   repoGet (GitRepo r) = repoGet r
 
   repoUpdate (DarcsRepo r) = repoUpdate r
   repoUpdate (SVNRepo r) = repoUpdate r
+  repoUpdate (CVSRepo r) = repoUpdate r
   repoUpdate (GitRepo r) = repoUpdate r
 
 -- darcs implementation 
@@ -187,6 +197,30 @@ instance Repo SVNRepoData where
     rawSystemVerbose "tar" [  "cfz", destFile, "-C", takeDirectory d, takeFileName d]
     rawSystemVerbose "rm" [ "-fr", d ]
     return ()
+
+-- SVN implementation
+-- TODO
+instance Repo CVSRepoData where
+  parseFromConfig map = do 
+    cvsRoot <- lookup "cvsRoot" map
+    module' <- lookup "module" map
+    return $ CVSRepoData cvsRoot module'
+  repoGet (CVSRepoData cvsRoot module') dest =
+    withCurrentDirectory (takeDirectory dest) $ do
+      removeDirectory dest -- I guess git wants to create the directory itself 
+      rawSystemVerbose "cvs" $ ["-f", "-z0", "-d", cvsRoot, "checkout", "-D", "NOW", "-d", (takeFileName dest), module' ]
+      -- rawSystemVerbose "sh" $ ["-c", "a=*; echo \"a is\" $a; mv $a/* .; rmdir $a"];
+  repoUpdate (CVSRepoData _ _) dest =
+    withCurrentDirectory dest $ rawSystemVerbose "cvs" $ ["update"]
+
+  createTarGz _ dir destFile = do
+    d <- tempDir
+    rawSystemVerbose "cp" [ "-r", dir, d ]
+    rawSystemVerbose "/bin/sh" [ "-c", "find -type d " ++ (show d) ++ " -name \"*.cvs\" | rm -fr " ]
+    rawSystemVerbose "tar" [  "cfz", destFile, "-C", takeDirectory d, takeFileName d]
+    rawSystemVerbose "rm" [ "-fr", d ]
+    return ()
+
 -- git implementation 
 instance Repo GitRepoData where
   parseFromConfig map = do 
@@ -222,7 +256,7 @@ rawSystemVerbose app args = do
       return ec
 
 
-data DoWorkAction = DWUpdate | DWPublish
+data DoWorkAction = DWUpdate | DWPublish | DWUpdateThenPublish
 clean (Config repoDir _ repos) = putStrLn "not yet implemented"
 
 doWork (Config repoDir nixPublishDir repos) cmd args = do
@@ -232,6 +266,7 @@ doWork (Config repoDir nixPublishDir repos) cmd args = do
   let f = case cmd of
             DWUpdate -> updateRepoTarGz
             DWPublish -> publish
+            DWUpdateThenPublish -> (\r -> updateRepoTarGz r >> publish r)
   when (length reposFiltered < length args) $ print $ "warning, only updating " ++ (show $ map repoName reposFiltered)
 
 
@@ -318,6 +353,7 @@ main = do
                 ("--show-repos":_) -> putStrLn $ unwords $ map (\(RepoInfo name _ _ _) -> name) (repos config)
                 ("--update":args) -> doWork config DWUpdate args
                 ("--publish":args) -> doWork config DWPublish args
+                ("--update-then-publish":args) -> doWork config DWUpdateThenPublish args
                 ("--clean":_) -> clean config
                 ("--print-config":_) -> print config
                 _ -> printUsage
