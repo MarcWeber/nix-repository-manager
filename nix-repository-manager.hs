@@ -37,7 +37,7 @@ import System.FilePath
  -}
 
 printUsage = putStrLn $ unlines
-  [ "purpose: update repositiories with less effort providing hash sum for import withing nix expressions automatically"
+  [ "purpose: update repositiories with less effort providing hash sum for import within nix expressions automatically"
   , ""
   , "usage:"
   , "--update  list of names or groups to update or all (TODO)"
