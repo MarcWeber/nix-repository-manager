@@ -94,6 +94,8 @@ data Repository =
   | SVNRepo SVNRepoData
   | CVSRepo CVSRepoData
   | GitRepo GitRepoData
+  | BZRRepo BZRRepoData
+  | MercurialRepo MercurialRepoData
   deriving (Show,Read)
 
 data DarcsRepoData = DarcsRepoData String -- URL 
@@ -109,6 +111,13 @@ data CVSRepoData = CVSRepoData String -- cvs root (eg :pserver:anonymous@synergy
   deriving (Show,Read)
 
 data GitRepoData = GitRepoData String -- URL 
+  deriving (Show,Read)
+
+data BZRRepoData = BZRRepoData String -- URL 
+  deriving (Show,Read)
+
+data MercurialRepoData = MercurialRepoData String -- URL 
+
   deriving (Show,Read)
 
 class Repo r where
@@ -144,6 +153,8 @@ instance Repo Repository where
   createTarGz (SVNRepo r ) b c = createTarGz r b c
   createTarGz (CVSRepo r ) b c = createTarGz r b c
   createTarGz (GitRepo r ) b c = createTarGz r b c
+  createTarGz (BZRRepo r ) b c = createTarGz r b c
+  createTarGz (MercurialRepo r ) b c = createTarGz r b c
   parseFromConfig map = do
     repoType <- lookup "type" map
     case repoType of
@@ -151,17 +162,22 @@ instance Repo Repository where
       "svn" -> parseFromConfig map >>= return . SVNRepo
       "cvs" -> parseFromConfig map >>= return . CVSRepo
       "git" -> parseFromConfig map >>= return . GitRepo
+      "bzr" -> parseFromConfig map >>= return . BZRRepo
+      "hg" -> parseFromConfig map >>= return . MercurialRepo
       _ -> Nothing
 
   repoGet (DarcsRepo r) = repoGet r
   repoGet (SVNRepo r) = repoGet r
   repoGet (CVSRepo r) = repoGet r
   repoGet (GitRepo r) = repoGet r
+  repoGet (BZRRepo r) = repoGet r
+  repoGet (MercurialRepo r) = repoGet r
 
   repoUpdate (DarcsRepo r) = repoUpdate r
   repoUpdate (SVNRepo r) = repoUpdate r
   repoUpdate (CVSRepo r) = repoUpdate r
-  repoUpdate (GitRepo r) = repoUpdate r
+  repoUpdate (BZRRepo r) = repoUpdate r
+  repoUpdate (MercurialRepo r) = repoUpdate r
 
 -- darcs implementation 
 instance Repo DarcsRepoData where
@@ -172,12 +188,13 @@ instance Repo DarcsRepoData where
     removeDirectory dest -- darcs wants to create the directory itself 
     rawSystemVerbose "darcs" $ ["get", "--partial", "--repodir=" ++ dest ] ++ ( maybe [] (\t -> ["--tag=" ++t]) tag) ++ [url]
 
-  repoUpdate (DarcsRepoData _ _) dest = rawSystemVerbose "darcs" $ ["pull", "-a", "--repodir=" ++ dest ]
+  repoUpdate (DarcsRepoData url _) dest = rawSystemVerbose "darcs" $ ["pull", "-a", "--repodir=" ++ dest, url ]
 
   createTarGz _ dir destFile = do
     d <- tempDir
     rawSystemVerbose "cp" [ "-r", dir, d ]
     rawSystemVerbose "rm" [ "-fr", (d </> "_darcs") ]
+    rawSystemVerbose "sh" [ "-c", "[ -f *etup.*hs ] && rm -fr dist" ] -- clean.. else cabal will not be able to recognize that it should recompile the files -> trouble 
     rawSystemVerbose "tar" [  "cfz", destFile, "-C", takeDirectory d, takeFileName d]
     rawSystemVerbose "rm" [ "-fr", d ]
     return ()
@@ -206,9 +223,16 @@ instance Repo CVSRepoData where
     module' <- lookup "module" map
     return $ CVSRepoData cvsRoot module'
   repoGet (CVSRepoData cvsRoot module') dest =
-    withCurrentDirectory (takeDirectory dest) $ do
-      removeDirectory dest -- I guess git wants to create the directory itself 
-      rawSystemVerbose "cvs" $ ["-f", "-z0", "-d", cvsRoot, "checkout", "-D", "NOW", "-d", (takeFileName dest), module' ]
+    withCurrentDirectory dest $ do
+        a <- rawSystemVerbose "cvs" [ "-z0", "-d", cvsRoot, "checkout", "-D", "NOW", module' ]
+        rawSystemVerbose "sh" $ ["-c", "a=*; echo \"a is\" $a; mv $a/* .; rmdir $a"];
+   -- this *should* work. However checking out hsql -> surprise, folder gone
+    -- withCurrentDirectory (takeDirectory dest) $ do
+      -- removeDirectory dest -- I guess git wants to create the directory itself 
+      -- withCurrentDirectory ( takeDirectory dest ) $ do
+        -- a <- rawSystemVerbose "cvs" [ "-z0", "-d", cvsRoot, "checkout", "-D", "NOW", "-d", (takeFileName dest), module' ]
+        -- print "getting cvs sources complete finished"
+        -- return a
       -- rawSystemVerbose "sh" $ ["-c", "a=*; echo \"a is\" $a; mv $a/* .; rmdir $a"];
   repoUpdate (CVSRepoData _ _) dest =
     withCurrentDirectory dest $ rawSystemVerbose "cvs" $ ["update"]
@@ -238,6 +262,44 @@ instance Repo GitRepoData where
     rawSystemVerbose "tar" [  "cfz", destFile, "-C", takeDirectory d, takeFileName d]
     rawSystemVerbose "rm" [ "-fr", d ]
     return ()
+
+-- bzr implementation 
+instance Repo BZRRepoData where
+  parseFromConfig map = do 
+    url <- lookup "url" map
+    return $ BZRRepoData url
+  repoGet (BZRRepoData url) dest = do
+    removeDirectory dest -- I guess bzr wants to create the directory itself 
+    rawSystemVerbose "bzr" ["branch", url, dest]
+  repoUpdate (BZRRepoData url) dest =
+    withCurrentDirectory dest $ rawSystemVerbose "bzr" [ "update"] -- TODO: fix url when it has changed 
+  createTarGz _ dir destFile = do
+    d <- tempDir
+    rawSystemVerbose "cp" [ "-r", dir, d ]
+    rawSystemVerbose "rm" [ "-fr", d </> ".bzr" ]
+    rawSystemVerbose "tar" [  "cfz", destFile, "-C", takeDirectory d, takeFileName d]
+    rawSystemVerbose "rm" [ "-fr", d ]
+    return ()
+
+
+-- Mercurial implementation 
+instance Repo MercurialRepoData where
+  parseFromConfig map = do 
+    url <- lookup "url" map
+    return $ MercurialRepoData url
+  repoGet (MercurialRepoData url) dest = do
+    removeDirectory dest -- I guess git wants to create the directory itself 
+    rawSystemVerbose "hg" ["clone", url, dest]
+  repoUpdate (MercurialRepoData url) dest =
+    withCurrentDirectory dest $ rawSystemVerbose "hg" [ "pull"]
+  createTarGz _ dir destFile = do
+    d <- tempDir
+    rawSystemVerbose "cp" [ "-r", dir, d ]
+    rawSystemVerbose "rm" [ "-fr", d </> ".hg" ]
+    rawSystemVerbose "tar" [  "cfz", destFile, "-C", takeDirectory d, takeFileName d]
+    rawSystemVerbose "rm" [ "-fr", d ]
+    return ()
+
 -- ========== helper functions ======================================= 
 createDirectoryIfMissingVerbose dir = do
   e <- doesDirectoryExist dir
@@ -298,15 +360,14 @@ doWork (Config repoDir nixPublishDir repos) cmd args = do
            rawSystemVerbose "rsync" [ distFile, "nix@mawercer.de:www/repos/" ++ distFileName ]
            -- write .nix fetch info file
            sha256 <- liftM read $ readFile (distDir </> addExtension n (show Sha256))
-           writeFile (nixPublishDir </> addExtension n ".nix") $ unlines $ [
+           let nixFile = nixPublishDir </> addExtension n ".nix"
+           writeFile nixFile $ unlines $ [
                         " args: with args; fetchurl { "
                       , "  url = http://mawercer.de/~nix/repos/" ++ distFileName ++ ";"
                       , "  sha256 = " ++ show (sha256 :: String) ++ ";}"
                       ]
 
-
-
-
+           print $ "nix-file : " ++ nixFile
 
 createHash :: FilePath -> HashType -> FilePath -> IO ()
 createHash dist hash dest = do
