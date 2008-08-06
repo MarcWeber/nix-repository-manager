@@ -4,6 +4,7 @@ import Control.Exception
 import GHC.Handle
 import GHC.IO
 import System.Process
+import System.IO
 import GHC.IOBase
 import System.Exit
 import System.Cmd
@@ -62,7 +63,6 @@ printUsage = putStrLn $ unlines
 
 
 data Config = Config { repoDir :: FilePath
-                     , nixPublishDir :: FilePath
                      , repos :: [ RepoInfo ] }
   deriving (Show)
 emptyConfig = Config "" []
@@ -71,8 +71,8 @@ parseConfig :: FilePath -> IO Config
 parseConfig file = do
   let parseLine :: Int -> String -> RepoInfo
       parseLine nr l = maybe (error ("errornous line " ++ (show nr))) id $ parseFromConfig (read l)
-  (repoDir:nixPublishDir:lines) <- liftM lines $ readFile file
-  return $ Config repoDir nixPublishDir $ zipWith parseLine [1..] lines
+  (repoDir:lines) <- liftM lines $ readFile file
+  return $ Config repoDir $ zipWith parseLine [1..] lines
 
 data HashType = Sha256 | MD5
   deriving (Read)
@@ -319,9 +319,9 @@ rawSystemVerbose app args = do
 
 
 data DoWorkAction = DWUpdate | DWPublish | DWUpdateThenPublish
-clean (Config repoDir _ repos) = putStrLn "not yet implemented"
+clean (Config repoDir repos) = putStrLn "not yet implemented"
 
-doWork (Config repoDir nixPublishDir repos) cmd args = do
+doWork h (Config repoDir repos) cmd args = do
   let reposFiltered = filter (\(RepoInfo n gs _ _) -> null args 
                                                     || any (`elem` args) (n:gs) 
                                                     || args == ["all"]) repos
@@ -360,14 +360,14 @@ doWork (Config repoDir nixPublishDir repos) cmd args = do
            rawSystemVerbose "rsync" [ distFile, "nix@mawercer.de:www/repos/" ++ distFileName ]
            -- write .nix fetch info file
            sha256 <- liftM read $ readFile (distDir </> addExtension n (show Sha256))
-           let nixFile = nixPublishDir </> addExtension n ".nix"
-           writeFile nixFile $ unlines $ [
-                        " args: with args; fetchurl { "
-                      , "  url = http://mawercer.de/~nix/repos/" ++ distFileName ++ ";"
-                      , "  sha256 = " ++ show (sha256 :: String) ++ ";}"
-                      ]
-
-           print $ "nix-file : " ++ nixFile
+           let str = unlines [
+                      "  " ++ n ++ " = args: with args; fetchurl {"
+                    , "    url = http://mawercer.de/~nix/repos/" ++ distFileName ++ ";"
+                    , "    sha256 = " ++ show (sha256 :: String) ++ ";"
+                    , "  };"
+                    ]
+           hPutStrLn h str
+           putStrLn str
 
 createHash :: FilePath -> HashType -> FilePath -> IO ()
 createHash dist hash dest = do
@@ -401,6 +401,9 @@ configFile ("--config":c:args) = return $ (c, args)
 configFile args = liftM (\a -> (a </>  ".nix_repository_manager.conf" ,args) ) getHomeDirectory
 
 main = do
+  p <- getProgName
+  h <- openFile ("/tmp/" ++ p) AppendMode
+  hPutStrLn h "=  ======================================================="
   args <- getArgs
   home <- getHomeDirectory
   case args of 
@@ -412,9 +415,9 @@ main = do
                case args of
                 ("--show-groups":_) -> putStrLn $ unwords $ nub $ concat $ map (\(RepoInfo _ gs _ _) -> gs) (repos config)
                 ("--show-repos":_) -> putStrLn $ unwords $ map (\(RepoInfo name _ _ _) -> name) (repos config)
-                ("--update":args) -> doWork config DWUpdate args
-                ("--publish":args) -> doWork config DWPublish args
-                ("--update-then-publish":args) -> doWork config DWUpdateThenPublish args
+                ("--update":args) -> doWork h config DWUpdate args
+                ("--publish":args) -> doWork h config DWPublish args
+                ("--update-then-publish":args) -> doWork h config DWUpdateThenPublish args
                 ("--clean":_) -> clean config
                 ("--print-config":_) -> print config
                 _ -> printUsage
