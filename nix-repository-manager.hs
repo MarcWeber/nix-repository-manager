@@ -1,10 +1,12 @@
--- packages: base,filepath,mtl,directory,process
+-- packages:base,filepath,mtl,directory,process,time,old-locale
 module Main where
 import Control.Exception
 import GHC.Handle
 import GHC.IO
 import System.Process
 import System.IO
+import System.IO.Unsafe
+import System.Locale
 import GHC.IOBase
 import System.Exit
 import System.Cmd
@@ -14,6 +16,9 @@ import GHC.Unicode
 import System.Environment
 import System.Directory
 import System.FilePath
+import Data.Time.Clock
+import Data.Time.Format
+import Data.Time.LocalTime
 
 {-
 
@@ -37,16 +42,23 @@ import System.FilePath
         svn) put this version somwhere into the .tar.gz name
  -}
 
+path = "pkgs/misc/bleeding-edge-fetch-infos.nix"
+
 printUsage = putStrLn $ unlines
   [ "purpose: update repositiories with less effort providing hash sum for import within nix expressions automatically"
   , ""
   , "usage:"
+  , "<config File> [ <path to nixpkgs where to update bleeding-edge-fetch-info.nix> ]  one of the following options"
   , "--update  list of names or groups to update or all (TODO)"
-  , "--publish upload repostiroy to mawercer.de and write bleeding-edge-fetch-info/name.nix file"
+  , "--publish upload repostiroy to mawercer.de"
   , "--update-then-publish list"
   , "--show-groups (TODO)"
   , "--show-repos (TODO)"
   , "--clean remove repositories no longer in config (TODO)"
+  , ""
+  , "you can pass the path to the nixpkgs repo containing " ++ path ++ " as first arg,"
+  , "then it will be updated automatically"
+  , ""
   , ""
   , "sample config start   ======================================================="
   , "/home/marc/managed_repos"
@@ -210,7 +222,7 @@ instance Repo SVNRepoData where
   createTarGz _ dir destFile = do
     d <- tempDir
     rawSystemVerbose "cp" [ "-r", dir, d ]
-    rawSystemVerbose "/bin/sh" [ "-c", "find -type d " ++ (show d) ++ " -name \"*.svn\" | rm -fr " ]
+    rawSystemVerbose "/bin/sh" [ "-c", "find " ++ (show d) ++ " -type d -name \"*.svn\" | rm -fr " ]
     rawSystemVerbose "tar" [  "cfz", destFile, "-C", takeDirectory d, takeFileName d]
     rawSystemVerbose "rm" [ "-fr", d ]
     return ()
@@ -240,7 +252,7 @@ instance Repo CVSRepoData where
   createTarGz _ dir destFile = do
     d <- tempDir
     rawSystemVerbose "cp" [ "-r", dir, d ]
-    rawSystemVerbose "/bin/sh" [ "-c", "find -type d " ++ (show d) ++ " -name \"*.cvs\" | rm -fr " ]
+    rawSystemVerbose "/bin/sh" [ "-c", "find " ++ (show d) ++ " -type d -name \"CVS\" | rm -fr " ]
     rawSystemVerbose "tar" [  "cfz", destFile, "-C", takeDirectory d, takeFileName d]
     rawSystemVerbose "rm" [ "-fr", d ]
     return ()
@@ -321,7 +333,34 @@ rawSystemVerbose app args = do
 data DoWorkAction = DWUpdate | DWPublish | DWUpdateThenPublish
 clean (Config repoDir repos) = putStrLn "not yet implemented"
 
-doWork h (Config repoDir repos) cmd args = do
+readFileStrict :: FilePath -> IO String
+readFileStrict fp = do
+    let fseqM [] = return [] 
+        fseqM xs = last xs `seq` return xs
+    fseqM =<< readFile fp
+
+attr name distFileName sha256 = [
+      "  " ++ name ++ " = args: with args; fetchurl { # " ++ ( formatTime defaultTimeLocale "%c" (unsafePerformIO getCurrentTime) )
+    , "    url = http://mawercer.de/~nix/repos/" ++ distFileName ++ ";"
+    , "    sha256 = " ++ show (sha256 :: String) ++ ";"
+    , "  };"
+    ]
+
+
+replace :: String -> String -> String -> String -> String
+replace fileContents name distFileName sha256 = do
+  unlines $ replaceadd (lines fileContents) (attr name distFileName sha256)
+  where replaceadd ([last]) new = new ++ [last]
+        replaceadd (l:ls) new
+          | (isPrefixOf (name ++ " =") . dropWhile isSpace) l = new ++ drop 3 ls
+          | otherwise = l:replaceadd ls new
+addReplaceInFile (Just f) name distFileName sha256 = do
+  let fp = (f ++ "/" ++ path)
+  fc <- readFileStrict fp
+  writeFile fp $ replace fc name distFileName sha256
+addReplaceInFile _ _ _ _ = return ()
+
+doWork h (Config repoDir repos) cmd args mbFileToUpdate = do
   let reposFiltered = filter (\(RepoInfo n gs _ _) -> null args 
                                                     || any (`elem` args) (n:gs) 
                                                     || args == ["all"]) repos
@@ -357,15 +396,11 @@ doWork h (Config repoDir repos) cmd args = do
            let distDir = repoDir </> "dist"
            let distFile = distDir </> distFileName
            -- upload server 
-           rawSystemVerbose "rsync" [ distFile, "nix@mawercer.de:www/repos/" ++ distFileName ]
+           rawSystemVerbose "rsync" [ "-c", distFile, "nix@mawercer.de:www/repos/" ++ distFileName ]
            -- write .nix fetch info file
            sha256 <- liftM read $ readFile (distDir </> addExtension n (show Sha256))
-           let str = unlines [
-                      "  " ++ n ++ " = args: with args; fetchurl {"
-                    , "    url = http://mawercer.de/~nix/repos/" ++ distFileName ++ ";"
-                    , "    sha256 = " ++ show (sha256 :: String) ++ ";"
-                    , "  };"
-                    ]
+           let str = unlines $ attr n distFileName sha256
+           addReplaceInFile mbFileToUpdate n distFileName sha256
            hPutStrLn h str
            putStrLn str
 
@@ -394,30 +429,35 @@ withCurrentDirectory path f = do
     setCurrentDirectory path
     finally f (setCurrentDirectory cur)
 
--- myRead :: String -> IO Repo
--- myRead s = catch (const (print $ "could not parse config line" ++ s)) (return . read  $ s)
-configFile :: [String] -> IO (FilePath, [String])
-configFile ("--config":c:args) = return $ (c, args)
-configFile args = liftM (\a -> (a </>  ".nix_repository_manager.conf" ,args) ) getHomeDirectory
-
 main = do
   p <- getProgName
   h <- openFile ("/tmp/" ++ p) AppendMode
   hPutStrLn h "=  ======================================================="
-  args <- getArgs
+
+  (configF:args) <- getArgs 
+  (args, mbFileToUpdate) <- do
+     case args of
+      (f:args) -> do de <- doesDirectoryExist f 
+                     print de
+                     print f
+                     if de then do 
+                              putStrLn $ "directory " ++ f ++ " exists, will try updating " ++ path
+                              return (args, Just f)
+                           else return (f:args, Nothing)
+      _ -> return (args, Nothing)
+  
   home <- getHomeDirectory
   case args of 
     [] -> printUsage
     "--help":[] -> printUsage
-    args -> do (configF, args) <- configFile args
-               print "warning: there is no proper error reporting right now!"
+    args -> do print "warning: there is no proper error reporting right now!"
                config <- parseConfig configF
                case args of
                 ("--show-groups":_) -> putStrLn $ unwords $ nub $ concat $ map (\(RepoInfo _ gs _ _) -> gs) (repos config)
                 ("--show-repos":_) -> putStrLn $ unwords $ map (\(RepoInfo name _ _ _) -> name) (repos config)
-                ("--update":args) -> doWork h config DWUpdate args
-                ("--publish":args) -> doWork h config DWPublish args
-                ("--update-then-publish":args) -> doWork h config DWUpdateThenPublish args
+                ("--update":args) -> doWork h config DWUpdate args mbFileToUpdate
+                ("--publish":args) -> doWork h config DWPublish args mbFileToUpdate
+                ("--update-then-publish":args) -> doWork h config DWUpdateThenPublish args mbFileToUpdate
                 ("--clean":_) -> clean config
                 ("--print-config":_) -> print config
                 _ -> printUsage
