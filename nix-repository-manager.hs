@@ -11,6 +11,7 @@ import GHC.IOBase
 import System.Exit
 import System.Cmd
 import Data.List
+import Data.Maybe
 import Control.Monad
 import GHC.Unicode
 import System.Environment
@@ -39,7 +40,10 @@ import Data.Time.LocalTime
         make backup so that your can switch back in case of build failures
         think about incremental source updates in general (maybe the way binary distributions are provided)
         when working with version control system supporting verion ids (such as
-        svn) put this version somwhere into the .tar.gz name
+        svn, git, ..) put this version somwhere into the .tar.gz name
+
+        !! change config file format to something more readable/ writable (Nix - Language ?)
+           because you have to quote the " in afterUpdateHook yourself at the moment (FIXME)
  -}
 
 path = "pkgs/misc/bleeding-edge-fetch-infos.nix"
@@ -92,14 +96,15 @@ instance Show HashType where
   show Sha256 = "sha256"
   show MD5 = "md5"
 
-
+newtype AfterUpdateHook = AfterUpdateHook String deriving (Show, Read)
 -- ========== repository types ======================================= 
 data RepoInfo = RepoInfo String -- name 
                  [String] -- groups (so that you can update all belonging to the same group at once
                  Repository
                  [HashType] -- which hash types to calculate 
+                 (Maybe AfterUpdateHook)
   deriving (Show,Read)
-repoName (RepoInfo n _ _ _) = n
+repoName (RepoInfo n _ _ _ _) = n
 
 data Repository = 
     DarcsRepo DarcsRepoData
@@ -150,14 +155,16 @@ class Repo r where
 -- ============= instances ==============================================
 
 instance Repo RepoInfo where
-  createTarGz (RepoInfo _ _ r _ ) b c = createTarGz r b c
-  repoGet (RepoInfo _ _ r _) = repoGet r
-  repoUpdate (RepoInfo _ _ r _) = repoUpdate r
+  createTarGz (RepoInfo _ _ r _ _ ) b c = createTarGz r b c
+  repoGet (RepoInfo _ _ r _ _) = repoGet r
+  repoUpdate (RepoInfo _ _ r _ _) = repoUpdate r
   parseFromConfig map = do name <- lookup "name" map
                            repo <- (parseFromConfig map)
+                           let afterUpdateHook = lookup "afterUpdateHook" map >>= return . AfterUpdateHook
                            return $ RepoInfo name (maybe [] words $ lookup "groups" map) -- groups 
                                    repo -- Repo 
                                   [Sha256, MD5]
+                                  afterUpdateHook
                                  -- (maybe [Sha256] (map read . words) $ lookup "hash" map) [>Hash to use 
   
 instance Repo Repository where
@@ -188,6 +195,7 @@ instance Repo Repository where
   repoUpdate (DarcsRepo r) = repoUpdate r
   repoUpdate (SVNRepo r) = repoUpdate r
   repoUpdate (CVSRepo r) = repoUpdate r
+  repoUpdate (GitRepo r) = repoUpdate r
   repoUpdate (BZRRepo r) = repoUpdate r
   repoUpdate (MercurialRepo r) = repoUpdate r
 
@@ -313,6 +321,13 @@ instance Repo MercurialRepoData where
     return ()
 
 -- ========== helper functions ======================================= 
+
+mySystem :: String -> IO ()
+mySystem cmd = do status <- system cmd
+                  case status of
+                    ExitSuccess -> return ()
+                    ExitFailure status  -> error $ "cmd " ++ cmd ++ " failed with " ++ (show status)
+
 createDirectoryIfMissingVerbose dir = do
   e <- doesDirectoryExist dir
   when (not e) $ putStrLn ("creating dir " ++ dir) >> createDirectoryIfMissing True dir
@@ -361,7 +376,7 @@ addReplaceInFile (Just f) name distFileName sha256 = do
 addReplaceInFile _ _ _ _ = return ()
 
 doWork h (Config repoDir repos) cmd args mbFileToUpdate = do
-  let reposFiltered = filter (\(RepoInfo n gs _ _) -> null args 
+  let reposFiltered = filter (\(RepoInfo n gs _ _ _) -> null args 
                                                     || any (`elem` args) (n:gs) 
                                                     || args == ["all"]) repos
   let f = case cmd of
@@ -372,7 +387,7 @@ doWork h (Config repoDir repos) cmd args mbFileToUpdate = do
 
 
   mapM_ f reposFiltered
-  where updateRepoTarGz r@(RepoInfo n _ repo hash) = do
+  where updateRepoTarGz r@(RepoInfo n _ repo hash (afterUpdateHook)) = do
            -- update 
            let thisRepo = repoDir </> n -- copied some lines below 
            let distFileName = addExtension n ".tar.gz"
@@ -386,11 +401,17 @@ doWork h (Config repoDir repos) cmd args mbFileToUpdate = do
                  putStrLn $ "\n\nchecking out " ++ n
                  createDirectoryIfMissing True thisRepo
                  repoGet repo thisRepo
+           -- afterUpdateHook 
+           case afterUpdateHook of
+            Just (AfterUpdateHook cmd) -> do
+                    putStrLn $ "\n\nrunning afterUpdateHook" ++ n
+                    withCurrentDirectory thisRepo $ mySystem cmd
+            _ -> return ()
            -- tar.gz 
            createDirectoryIfMissing True (distDir)
            createTarGz r thisRepo distFile
            sequence_ $ zipWith3 createHash (cycle [distFile]) hash [ distDir </> addExtension n (show h) | h <- hash ]
-        publish r@(RepoInfo n _ repo hash) = do
+        publish r@(RepoInfo n _ repo hash _) = do
            let thisRepo = repoDir </> n -- copied some lines above
            let distFileName = addExtension n ".tar.gz"
            let distDir = repoDir </> "dist"
@@ -453,8 +474,8 @@ main = do
     args -> do print "warning: there is no proper error reporting right now!"
                config <- parseConfig configF
                case args of
-                ("--show-groups":_) -> putStrLn $ unwords $ nub $ concat $ map (\(RepoInfo _ gs _ _) -> gs) (repos config)
-                ("--show-repos":_) -> putStrLn $ unwords $ map (\(RepoInfo name _ _ _) -> name) (repos config)
+                ("--show-groups":_) -> putStrLn $ unwords $ nub $ concat $ map (\(RepoInfo _ gs _ _ _) -> gs) (repos config)
+                ("--show-repos":_) -> putStrLn $ unwords $ map (\(RepoInfo name _ _ _ _) -> name) (repos config)
                 ("--update":args) -> doWork h config DWUpdate args mbFileToUpdate
                 ("--publish":args) -> doWork h config DWPublish args mbFileToUpdate
                 ("--update-then-publish":args) -> doWork h config DWUpdateThenPublish args mbFileToUpdate
