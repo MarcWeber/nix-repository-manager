@@ -168,6 +168,7 @@ instance Repo RepoInfo where
   repoGet (RepoInfo _ _ r _) = repoGet r
   isRepoClean (RepoInfo _ _ r _) = isRepoClean r
   repoUpdate (RepoInfo _ _ r _) = repoUpdate r
+  revId (RepoInfo _ _ r _) = revId r
   parseFromConfig map = do name <- lookup "name" map
                            repo <- (parseFromConfig map)
                            let afterUpdateHook = lookup "afterUpdateHook" map >>= return . AfterUpdateHook
@@ -243,13 +244,30 @@ instance Repo DarcsRepoData where
     rawSystemVerbose "rm" [ "-fr", d ]
     return ()
   -- system ["darcs", "get", "--partial"]
+  revId _ fp = withCurrentDirectory fp $ do
+    let p = "nrmtag"
+    darcs <- findExecutable' "darcs"
+    out <- runInteractiveProcess' darcs ["changes","--last=1"] Nothing Nothing $ \(_,o,_) -> hGetContents o
+    let l = dropWhile isSpace . head . drop 1 . lines $ out
+    if "tagged " `isPrefixOf` l  -- last patch is a tag, use that
+      then return $ drop (length "tagged ") l
+      else do -- create a new tag 
+        out <- runInteractiveProcess' darcs ["show","tags"] Nothing Nothing $ \(_,o,_) -> hGetContents o
+        let nrm_tags = [ drop (length p) l | l <- map (dropWhile isSpace) (lines out), p `isPrefixOf` l  ]
+        let nextTag = case nrm_tags of
+                [] -> 1
+                xs -> (+1) . last . sort . map read $ xs
+        let newTag = p ++ (show nextTag)
+        runInteractiveProcess' darcs ["tag", newTag] Nothing Nothing$ const (return ())
+        return newTag
   isRepoClean _ = do
     darcs <- findExecutable' "darcs"
-    (_,oH,_,p) <- runInteractiveProcess darcs ["whatsnew"] Nothing Nothing
-    out <- hGetContents oH
-    waitForProcess p
-    return $ "No changes!" `isPrefixOf` out
-    
+    p <- runProcess darcs ["whatsnew"] Nothing Nothing Nothing Nothing Nothing
+    ec <- waitForProcess p
+    case ec of
+      ExitSuccess -> return False
+      ExitFailure 1 -> return True
+
 -- SVN implementation
 instance Repo SVNRepoData where
   parseFromConfig map = do 
@@ -266,16 +284,12 @@ instance Repo SVNRepoData where
     return ()
   revId _ fp = withCurrentDirectory fp $ do
     svn <- findExecutable' "svn"
-    (_,oH,_,p) <- runInteractiveProcess svn ["info"] Nothing Nothing
-    out <- hGetContents oH
-    waitForProcess p
+    out <- runInteractiveProcess' svn ["info"] Nothing Nothing $ \(_,o,_) -> hGetContents o
     return $ let s = "Revision: " 
              in  head . (drop (length s) ) . filter (s `isPrefixOf`) . lines $ out
   isRepoClean _ = do
     svn <- findExecutable' "svn"
-    (_,oH,_,p) <- runInteractiveProcess svn ["diff"] Nothing Nothing
-    out <- hGetContents oH
-    waitForProcess p
+    out <- runInteractiveProcess' svn ["diff"] Nothing Nothing $ \(_,o,_) -> hGetContents o
     return $ all isSpace out
 
 -- SVN implementation
@@ -330,15 +344,11 @@ instance Repo GitRepoData where
     return ()
   revId _ fp = withCurrentDirectory fp $ do
     git <- findExecutable' "svn"
-    (_,oH,_,p) <- runInteractiveProcess git ["rev-parse", "--verify","HEAD"] Nothing Nothing
-    out <- hGetContents oH
-    waitForProcess p
+    out <- runInteractiveProcess' git ["rev-parse", "--verify","HEAD"] Nothing Nothing $ \(_,o,_) -> hGetContents o
     return $ head . lines $ out
   isRepoClean _ = do
     git <- findExecutable' "git"
-    (_,oH,_,p) <- runInteractiveProcess git ["diff"] Nothing Nothing
-    out <- hGetContents oH
-    waitForProcess p
+    out <- runInteractiveProcess' git ["diff"] Nothing Nothing $ \(_,o,_) -> hGetContents o
     return $ all isSpace out
 
 -- bzr implementation 
@@ -383,15 +393,11 @@ instance Repo MercurialRepoData where
     return ()
   revId _ fp = withCurrentDirectory fp $ do
     hg <- findExecutable' "hg"
-    (_,oH,_,p) <- runInteractiveProcess hg ["log", "-l1"] Nothing Nothing
-    out <- hGetContents oH
-    waitForProcess p
+    out <- runInteractiveProcess' hg ["log", "-l1"] Nothing Nothing $ \(_,o,_) -> hGetContents o
     return $ dropWhile (/= ':') . dropWhile (/= ':') . head . lines $ out
   isRepoClean _ = do
     hg <- findExecutable' "hg"
-    (_,oH,_,p) <- runInteractiveProcess hg ["diff"] Nothing Nothing
-    out <- hGetContents oH
-    waitForProcess p
+    out <- runInteractiveProcess' hg ["diff"] Nothing Nothing $ \(_,o,_) -> hGetContents o
     return $ all isSpace out
 
 -- ========== helper functions ======================================= 
@@ -430,6 +436,14 @@ runProcess' n args = do
   case p of
     ExitSuccess -> return ()
     ExitFailure ec -> error $ n ++ " " ++ (show args) ++ " exited with " ++ (show ec)
+
+runInteractiveProcess' cmd args mb_cwd mb_env f = do
+  (i,o,e,p) <- runInteractiveProcess cmd args mb_cwd mb_env
+  r <- f (i,o,e)
+  ec <- waitForProcess p
+  case ec of
+    ExitSuccess -> return r
+    ExitFailure e -> error $ "command " ++ cmd ++ " " ++ show args ++ " failed with " ++ (show e)
 
 findExecutable' n = liftM (fromMaybe (error $ n ++ " not found in path")) $ findExecutable n
 
@@ -478,10 +492,18 @@ doWork h (Config repoDir repos) cmd args mbFileToUpdate = do
   where updateRepoTarGz r@(RepoInfo n _ repo (afterUpdateHook)) = do
            -- update 
            let thisRepo = repoDir </> n -- copied some lines below 
+           let revLog = repoDir </> (n ++ ".log") -- copied some lines below 
            let distFileName rId = addExtension (n ++ "-" ++ rId) ".tar.gz"
            let distDir = repoDir </> "dist"
            let distFileLocation = distDir </> n
+           let checkCleanness = withCurrentDirectory thisRepo $ do
+                    -- don't craete a new dist file if the repo is dirty
+                   isClean <- isRepoClean r
+                   ignoreDirty <- (getEnv "IGNORE_DIRTY" >> return True) `E.catch` (\_ -> return  False)
+                   when ((not isClean) && (not ignoreDirty)) $ do
+                     error $ "the working directory of " ++n ++" is dirty !, set IGNORE_DIRTY to ignore this test"
 
+           checkCleanness
            de <- doesDirectoryExist thisRepo
            if de then do
                  putStrLn $ "\n\nupdating " ++ n
@@ -498,12 +520,7 @@ doWork h (Config repoDir repos) cmd args mbFileToUpdate = do
                     putStrLn $ "\n\nrunning afterUpdateHook" ++ n
                     withCurrentDirectory thisRepo $ mySystem cmd
             _ -> return ()
-           withCurrentDirectory thisRepo $ do
-              -- don't craete a new dist file if the repo is dirty
-             isClean <- isRepoClean r
-             ignoreDirty <- (getEnv "IGNORE_DIRTY" >> return False) `E.catch` (\_ -> return  True)
-             when ((not isClean) && (not ignoreDirty)) $ do
-               error $ "the working directory of " ++n ++" is dirty !, set IGNORE_DIRTY to ignore this test"
+           checkCleanness
            -- tar.gz 
            createDirectoryIfMissing True (distDir)
            rId <- revId r thisRepo
@@ -517,6 +534,9 @@ doWork h (Config repoDir repos) cmd args mbFileToUpdate = do
            addReplaceInFile mbFileToUpdate n distFile sha256
            hPutStrLn h str
            putStrLn str
+           h <- openFile revLog AppendMode
+           t <- liftM (formatTime defaultTimeLocale "%c") getCurrentTime
+           hPutStrLn h (rId ++ " # " ++ t) >> hClose h
         publish r@(RepoInfo n _ repo _) = do
            let thisRepo = repoDir </> n -- copied some lines above
            let distDir = repoDir </> "dist"
@@ -529,10 +549,8 @@ doWork h (Config repoDir repos) cmd args mbFileToUpdate = do
 
 createHash :: FilePath -> HashType -> FilePath -> IO String
 createHash dist hash dest = do
-  (in', out, err, ph) <- runInteractiveProcess "nix-hash" ["--type", (show hash),"--flat",  dist] Nothing Nothing
-  h <- liftM ((!!0) . lines) $! hGetContents out
-  ec <- waitForProcess ph
-  mapM_ hClose [err, in']
+  h <-  runInteractiveProcess' "nix-hash" ["--type", (show hash),"--flat",  dist] Nothing Nothing $ \(in', out, err) -> do
+      liftM ((!!0) . lines) $! hGetContents out
   writeFile dest $ "\"" ++ h ++ "\""
   return h
 
