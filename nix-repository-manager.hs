@@ -267,6 +267,7 @@ instance Repo DarcsRepoData where
     case ec of
       ExitSuccess -> return False
       ExitFailure 1 -> return True
+      ExitFailure ec -> error $ "unkown darcs whatsnew exit code " ++ (show ec)
 
 -- SVN implementation
 instance Repo SVNRepoData where
