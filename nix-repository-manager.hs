@@ -1,6 +1,6 @@
 -- packages:base,filepath,mtl,directory,process,time,old-locale
 module Main where
-import Control.Exception
+import Control.Exception as E
 import GHC.Handle
 import GHC.IO
 import System.Process
@@ -53,7 +53,7 @@ printUsage = putStrLn $ unlines
   , ""
   , "usage:"
   , "<config File> [ <path to nixpkgs where to update bleeding-edge-fetch-info.nix> ]  one of the following options"
-  , "--update  list of names or groups to update or all (TODO)"
+  , "--update  list of names or groups to update or all (TODO) (set NO_FETCH to only create dist/*.tar.gz)"
   , "--publish upload repostiroy to mawercer.de"
   , "--update-then-publish list"
   , "--show-groups (TODO)"
@@ -101,10 +101,9 @@ newtype AfterUpdateHook = AfterUpdateHook String deriving (Show, Read)
 data RepoInfo = RepoInfo String -- name 
                  [String] -- groups (so that you can update all belonging to the same group at once
                  Repository
-                 [HashType] -- which hash types to calculate 
                  (Maybe AfterUpdateHook)
   deriving (Show,Read)
-repoName (RepoInfo n _ _ _ _) = n
+repoName (RepoInfo n _ _ _) = n
 
 data Repository = 
     DarcsRepo DarcsRepoData
@@ -149,21 +148,31 @@ class Repo r where
   repoGet ::  r -> String -> IO ExitCode
   repoGet = repoUpdate
 
+  -- checks wether the repo is clean. This allows files to exist which do not belong to the repo.
+  -- But it should return False if any file differs from the repo contents.. 
+  -- (I've had an darcs pull issue once because of that)
+  isRepoClean :: r -> IO Bool
+  isRepoClean _ = return False
+
   repoUpdate ::  r -> String -> IO ExitCode
   repoUpdate = repoGet
+  -- return revision identifier - should not contain spaces (or name = ..  has to be set when generating derivatrions.. )
+  revId :: r -> FilePath -> IO String
+  revId _ fp = -- poor default implementation just returning current time stamp 
+      liftM (formatTime defaultTimeLocale "%F_%H-%M-%S") getCurrentTime
 
 -- ============= instances ==============================================
 
 instance Repo RepoInfo where
-  createTarGz (RepoInfo _ _ r _ _ ) b c = createTarGz r b c
-  repoGet (RepoInfo _ _ r _ _) = repoGet r
-  repoUpdate (RepoInfo _ _ r _ _) = repoUpdate r
+  createTarGz (RepoInfo _ _ r _ ) b c = createTarGz r b c
+  repoGet (RepoInfo _ _ r _) = repoGet r
+  isRepoClean (RepoInfo _ _ r _) = isRepoClean r
+  repoUpdate (RepoInfo _ _ r _) = repoUpdate r
   parseFromConfig map = do name <- lookup "name" map
                            repo <- (parseFromConfig map)
                            let afterUpdateHook = lookup "afterUpdateHook" map >>= return . AfterUpdateHook
                            return $ RepoInfo name (maybe [] words $ lookup "groups" map) -- groups 
                                    repo -- Repo 
-                                  [Sha256, MD5]
                                   afterUpdateHook
                                  -- (maybe [Sha256] (map read . words) $ lookup "hash" map) [>Hash to use 
   
@@ -192,12 +201,27 @@ instance Repo Repository where
   repoGet (BZRRepo r) = repoGet r
   repoGet (MercurialRepo r) = repoGet r
 
+  isRepoClean (DarcsRepo r) = isRepoClean r
+  isRepoClean (SVNRepo r) = isRepoClean r
+  isRepoClean (CVSRepo r) = isRepoClean r
+  isRepoClean (GitRepo r) = isRepoClean r
+  isRepoClean (BZRRepo r) = isRepoClean r
+  isRepoClean (MercurialRepo r) = isRepoClean r
+
   repoUpdate (DarcsRepo r) = repoUpdate r
   repoUpdate (SVNRepo r) = repoUpdate r
   repoUpdate (CVSRepo r) = repoUpdate r
   repoUpdate (GitRepo r) = repoUpdate r
   repoUpdate (BZRRepo r) = repoUpdate r
   repoUpdate (MercurialRepo r) = repoUpdate r
+
+  revId (DarcsRepo r) = revId r
+  revId (SVNRepo r) = revId r
+  revId (CVSRepo r) = revId r
+  revId (GitRepo r) = revId r
+  revId (BZRRepo r) = revId r
+  revId (MercurialRepo r) = revId r
+
 
 -- darcs implementation 
 instance Repo DarcsRepoData where
@@ -206,7 +230,7 @@ instance Repo DarcsRepoData where
         return $ DarcsRepoData url $ lookup "tag" map
   repoGet (DarcsRepoData url tag) dest = do
     removeDirectory dest -- darcs wants to create the directory itself 
-    rawSystemVerbose "darcs" $ ["get", "--partial", "--repodir=" ++ dest ] ++ ( maybe [] (\t -> ["--tag=" ++t]) tag) ++ [url]
+    rawSystemVerbose "darcs" $ ["get", "--hashed", "--repodir=" ++ dest ] ++ ( maybe [] (\t -> ["--tag=" ++t]) tag) ++ [url]
 
   repoUpdate (DarcsRepoData url _) dest = rawSystemVerbose "darcs" $ ["pull", "-a", "--repodir=" ++ dest, url ]
 
@@ -219,7 +243,13 @@ instance Repo DarcsRepoData where
     rawSystemVerbose "rm" [ "-fr", d ]
     return ()
   -- system ["darcs", "get", "--partial"]
-
+  isRepoClean _ = do
+    darcs <- findExecutable' "darcs"
+    (_,oH,_,p) <- runInteractiveProcess darcs ["whatsnew"] Nothing Nothing
+    out <- hGetContents oH
+    waitForProcess p
+    return $ "No changes!" `isPrefixOf` out
+    
 -- SVN implementation
 instance Repo SVNRepoData where
   parseFromConfig map = do 
@@ -234,6 +264,19 @@ instance Repo SVNRepoData where
     rawSystemVerbose "tar" [  "cfz", destFile, "-C", takeDirectory d, takeFileName d]
     rawSystemVerbose "rm" [ "-fr", d ]
     return ()
+  revId _ fp = withCurrentDirectory fp $ do
+    svn <- findExecutable' "svn"
+    (_,oH,_,p) <- runInteractiveProcess svn ["info"] Nothing Nothing
+    out <- hGetContents oH
+    waitForProcess p
+    return $ let s = "Revision: " 
+             in  head . (drop (length s) ) . filter (s `isPrefixOf`) . lines $ out
+  isRepoClean _ = do
+    svn <- findExecutable' "svn"
+    (_,oH,_,p) <- runInteractiveProcess svn ["diff"] Nothing Nothing
+    out <- hGetContents oH
+    waitForProcess p
+    return $ all isSpace out
 
 -- SVN implementation
 -- TODO
@@ -264,6 +307,9 @@ instance Repo CVSRepoData where
     rawSystemVerbose "tar" [  "cfz", destFile, "-C", takeDirectory d, takeFileName d]
     rawSystemVerbose "rm" [ "-fr", d ]
     return ()
+  isRepoClean _ = do
+    print "isRepoClean to be implemented for cvs, returning True"
+    return True
 
 -- git implementation 
 instance Repo GitRepoData where
@@ -282,6 +328,18 @@ instance Repo GitRepoData where
     rawSystemVerbose "tar" [  "cfz", destFile, "-C", takeDirectory d, takeFileName d]
     rawSystemVerbose "rm" [ "-fr", d ]
     return ()
+  revId _ fp = withCurrentDirectory fp $ do
+    git <- findExecutable' "svn"
+    (_,oH,_,p) <- runInteractiveProcess git ["rev-parse", "--verify","HEAD"] Nothing Nothing
+    out <- hGetContents oH
+    waitForProcess p
+    return $ head . lines $ out
+  isRepoClean _ = do
+    git <- findExecutable' "git"
+    (_,oH,_,p) <- runInteractiveProcess git ["diff"] Nothing Nothing
+    out <- hGetContents oH
+    waitForProcess p
+    return $ all isSpace out
 
 -- bzr implementation 
 instance Repo BZRRepoData where
@@ -300,6 +358,10 @@ instance Repo BZRRepoData where
     rawSystemVerbose "tar" [  "cfz", destFile, "-C", takeDirectory d, takeFileName d]
     rawSystemVerbose "rm" [ "-fr", d ]
     return ()
+  isRepoClean _ = do
+    print "isRepoClean to be implemented for bzr, returning True"
+    return True
+
 
 
 -- Mercurial implementation 
@@ -319,6 +381,18 @@ instance Repo MercurialRepoData where
     rawSystemVerbose "tar" [  "cfz", destFile, "-C", takeDirectory d, takeFileName d]
     rawSystemVerbose "rm" [ "-fr", d ]
     return ()
+  revId _ fp = withCurrentDirectory fp $ do
+    hg <- findExecutable' "hg"
+    (_,oH,_,p) <- runInteractiveProcess hg ["log", "-l1"] Nothing Nothing
+    out <- hGetContents oH
+    waitForProcess p
+    return $ dropWhile (/= ':') . dropWhile (/= ':') . head . lines $ out
+  isRepoClean _ = do
+    hg <- findExecutable' "hg"
+    (_,oH,_,p) <- runInteractiveProcess hg ["diff"] Nothing Nothing
+    out <- hGetContents oH
+    waitForProcess p
+    return $ all isSpace out
 
 -- ========== helper functions ======================================= 
 
@@ -348,15 +422,28 @@ rawSystemVerbose app args = do
 data DoWorkAction = DWUpdate | DWPublish | DWUpdateThenPublish
 clean (Config repoDir repos) = putStrLn "not yet implemented"
 
+runProcess' :: String -> [ String ] -> IO ()
+runProcess' n args = do
+  putStrLn $ "running " ++ n ++ (show args)
+  h <- runProcess n args Nothing Nothing Nothing Nothing Nothing
+  p <- waitForProcess h
+  case p of
+    ExitSuccess -> return ()
+    ExitFailure ec -> error $ n ++ " " ++ (show args) ++ " exited with " ++ (show ec)
+
+findExecutable' n = liftM (fromMaybe (error $ n ++ " not found in path")) $ findExecutable n
+
 readFileStrict :: FilePath -> IO String
 readFileStrict fp = do
     let fseqM [] = return [] 
         fseqM xs = last xs `seq` return xs
     fseqM =<< readFile fp
 
+-- changing the number of lines will break replace (and the existing files
+-- containing repo infos as well)
 attr name distFileName sha256 = [
       "  " ++ name ++ " = args: with args; fetchurl { # " ++ ( formatTime defaultTimeLocale "%c" (unsafePerformIO getCurrentTime) )
-    , "    url = http://mawercer.de/~nix/repos/" ++ distFileName ++ ";"
+    , "    url = \"http://mawercer.de/~nix/repos/" ++ distFileName ++ "\";"
     , "    sha256 = " ++ show (sha256 :: String) ++ ";"
     , "  };"
     ]
@@ -376,27 +463,31 @@ addReplaceInFile (Just f) name distFileName sha256 = do
 addReplaceInFile _ _ _ _ = return ()
 
 doWork h (Config repoDir repos) cmd args mbFileToUpdate = do
-  let reposFiltered = filter (\(RepoInfo n gs _ _ _) -> null args 
+  let reposFiltered = filter (\(RepoInfo n gs _ _) -> null args 
                                                     || any (`elem` args) (n:gs) 
                                                     || args == ["all"]) repos
   let f = case cmd of
             DWUpdate -> updateRepoTarGz
             DWPublish -> publish
             DWUpdateThenPublish -> (\r -> updateRepoTarGz r >> publish r)
-  when (length reposFiltered < length args) $ print $ "warning, only updating " ++ (show $ map repoName reposFiltered)
+  print $ "updating repos " ++ (show $ map repoName reposFiltered)
+  when (length reposFiltered < length args) $ print "!! no repos selected?"
 
 
   mapM_ f reposFiltered
-  where updateRepoTarGz r@(RepoInfo n _ repo hash (afterUpdateHook)) = do
+  where updateRepoTarGz r@(RepoInfo n _ repo (afterUpdateHook)) = do
            -- update 
            let thisRepo = repoDir </> n -- copied some lines below 
-           let distFileName = addExtension n ".tar.gz"
+           let distFileName rId = addExtension (n ++ "-" ++ rId) ".tar.gz"
            let distDir = repoDir </> "dist"
-           let distFile = distDir </> distFileName
+           let distFileLocation = distDir </> n
+
            de <- doesDirectoryExist thisRepo
            if de then do
                  putStrLn $ "\n\nupdating " ++ n
-                 repoUpdate repo thisRepo
+                 fetch <- (getEnv "NO_FETCH" >> return False) `E.catch` (\_ -> return  True)
+                 if fetch then repoUpdate repo thisRepo
+                          else return $ ExitSuccess
                else do
                  putStrLn $ "\n\nchecking out " ++ n
                  createDirectoryIfMissing True thisRepo
@@ -407,31 +498,43 @@ doWork h (Config repoDir repos) cmd args mbFileToUpdate = do
                     putStrLn $ "\n\nrunning afterUpdateHook" ++ n
                     withCurrentDirectory thisRepo $ mySystem cmd
             _ -> return ()
+           withCurrentDirectory thisRepo $ do
+              -- don't craete a new dist file if the repo is dirty
+             isClean <- isRepoClean r
+             ignoreDirty <- (getEnv "IGNORE_DIRTY" >> return False) `E.catch` (\_ -> return  True)
+             when ((not isClean) && (not ignoreDirty)) $ do
+               error $ "the working directory of " ++n ++" is dirty !, set IGNORE_DIRTY to ignore this test"
            -- tar.gz 
            createDirectoryIfMissing True (distDir)
+           rId <- revId r thisRepo
+           let distFile = distDir </> (distFileName rId)
+           print $ "distfile loc :: " ++ distFileLocation
+           writeFile distFileLocation distFile
            createTarGz r thisRepo distFile
-           sequence_ $ zipWith3 createHash (cycle [distFile]) hash [ distDir </> addExtension n (show h) | h <- hash ]
-        publish r@(RepoInfo n _ repo hash _) = do
-           let thisRepo = repoDir </> n -- copied some lines above
-           let distFileName = addExtension n ".tar.gz"
-           let distDir = repoDir </> "dist"
-           let distFile = distDir </> distFileName
-           -- upload server 
-           rawSystemVerbose "rsync" [ "-c", distFile, "nix@mawercer.de:www/repos/" ++ distFileName ]
-           -- write .nix fetch info file
-           sha256 <- liftM read $ readFile (distDir </> addExtension n (show Sha256))
-           let str = unlines $ attr n distFileName sha256
-           addReplaceInFile mbFileToUpdate n distFileName sha256
+           sha256 <- createHash distFile Sha256 (distFile ++ ".sha256")
+           -- nix fetch info attrs
+           let str = unlines $ attr n distFile sha256
+           addReplaceInFile mbFileToUpdate n distFile sha256
            hPutStrLn h str
            putStrLn str
+        publish r@(RepoInfo n _ repo _) = do
+           let thisRepo = repoDir </> n -- copied some lines above
+           let distDir = repoDir </> "dist"
+           let distFileLocation = distDir </> n
+           distFile <- readFile distFileLocation
+           let distFileName = takeFileName distFile
+           -- upload server 
+           rsync <- findExecutable' "rsync"
+           runProcess' rsync [ "-cs", distFile, "nix@mawercer.de:www/repos/" ++ distFileName ]
 
-createHash :: FilePath -> HashType -> FilePath -> IO ()
+createHash :: FilePath -> HashType -> FilePath -> IO String
 createHash dist hash dest = do
   (in', out, err, ph) <- runInteractiveProcess "nix-hash" ["--type", (show hash),"--flat",  dist] Nothing Nothing
   h <- liftM ((!!0) . lines) $! hGetContents out
   ec <- waitForProcess ph
   mapM_ hClose [err, in']
   writeFile dest $ "\"" ++ h ++ "\""
+  return h
 
 tempDir :: IO FilePath
 tempDir = do
@@ -474,8 +577,13 @@ main = do
     args -> do print "warning: there is no proper error reporting right now!"
                config <- parseConfig configF
                case args of
-                ("--show-groups":_) -> putStrLn $ unwords $ nub $ concat $ map (\(RepoInfo _ gs _ _ _) -> gs) (repos config)
-                ("--show-repos":_) -> putStrLn $ unwords $ map (\(RepoInfo name _ _ _ _) -> name) (repos config)
+                ("--show-groups":_) -> putStrLn $ unwords $ nub $ concat $ map (\(RepoInfo _ gs _ _) -> gs) (repos config)
+                ("--show-repos":xs) -> 
+                  let fil = case xs of
+                            [x] -> filter ((\(RepoInfo name _ _ _) -> (map toLower x) `isInfixOf` (map toLower name)))
+                            [] -> id
+                            _ -> error "too many arguments"
+                  in putStrLn $ unwords $ map (\(RepoInfo name _ _ _) -> name) (fil $ repos config)
                 ("--update":args) -> doWork h config DWUpdate args mbFileToUpdate
                 ("--publish":args) -> doWork h config DWPublish args mbFileToUpdate
                 ("--update-then-publish":args) -> doWork h config DWUpdateThenPublish args mbFileToUpdate
