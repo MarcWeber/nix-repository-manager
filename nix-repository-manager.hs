@@ -1,4 +1,9 @@
 -- packages:base,filepath,mtl,directory,process,time,old-locale
+{-# LANGUAGE CPP,ScopedTypeVariables #-}
+
+#define OLDTIME
+-- OLDTIME is easier for bootstrapping
+
 module Main where
 import Control.Exception as E
 import GHC.Handle
@@ -17,9 +22,16 @@ import GHC.Unicode
 import System.Environment
 import System.Directory
 import System.FilePath
+
+#ifdef OLDTIME
+import System.Time
+#else
 import Data.Time.Clock
 import Data.Time.Format
 import Data.Time.LocalTime
+#endif
+
+import Debug.Trace
 
 {-
 
@@ -45,6 +57,8 @@ import Data.Time.LocalTime
         !! change config file format to something more readable/ writable (Nix - Language ?)
            because you have to quote the " in afterUpdateHook yourself at the moment (FIXME)
  -}
+
+myHead d l = head l
 
 path = "pkgs/misc/bleeding-edge-fetch-infos.nix"
 
@@ -159,7 +173,11 @@ class Repo r where
   -- return revision identifier - should not contain spaces (or name = ..  has to be set when generating derivatrions.. )
   revId :: r -> FilePath -> IO String
   revId _ fp = -- poor default implementation just returning current time stamp 
+#ifdef OLDTIME
+      liftM (formatCalendarTime defaultTimeLocale "%F_%H-%M-%S") $ toCalendarTime =<< getClockTime
+#else
       liftM (formatTime defaultTimeLocale "%F_%H-%M-%S") getCurrentTime
+#endif
 
 -- ============= instances ==============================================
 
@@ -239,6 +257,8 @@ instance Repo DarcsRepoData where
     d <- tempDir
     rawSystemVerbose "cp" [ "-r", dir, d ]
     rawSystemVerbose "rm" [ "-fr", (d </> "_darcs") ]
+    -- I'm using darcs-git-import to browse history, so remove the _togit directory as well
+    rawSystemVerbose "rm" [ "-fr", (d </> "_togit") ]
     rawSystemVerbose "sh" [ "-c", "[ -f *etup.*hs ] && rm -fr dist" ] -- clean.. else cabal will not be able to recognize that it should recompile the files -> trouble 
     rawSystemVerbose "tar" [  "cfz", destFile, "-C", takeDirectory d, takeFileName d]
     rawSystemVerbose "rm" [ "-fr", d ]
@@ -248,7 +268,7 @@ instance Repo DarcsRepoData where
     let p = "nrmtag"
     darcs <- findExecutable' "darcs"
     out <- runInteractiveProcess' darcs ["changes","--last=1"] Nothing Nothing $ \(_,o,_) -> hGetContents o
-    let l = dropWhile isSpace . head . drop 1 . lines $ out
+    let l = dropWhile isSpace . myHead "43" . drop 1 . lines $ out
     if "tagged " `isPrefixOf` l  -- last patch is a tag, use that
       then return $ drop (length "tagged ") l
       else do -- create a new tag 
@@ -287,7 +307,7 @@ instance Repo SVNRepoData where
     svn <- findExecutable' "svn"
     out <- runInteractiveProcess' svn ["info"] Nothing Nothing $ \(_,o,_) -> hGetContents o
     return $ let s = "Revision: " 
-             in  head . (drop (length s) ) . filter (s `isPrefixOf`) . lines $ out
+             in  myHead "200 :: w!  " . (drop (length s) ) . filter (s `isPrefixOf`) . lines $ out
   isRepoClean _ = do
     svn <- findExecutable' "svn"
     out <- runInteractiveProcess' svn ["diff"] Nothing Nothing $ \(_,o,_) -> hGetContents o
@@ -344,9 +364,9 @@ instance Repo GitRepoData where
     rawSystemVerbose "rm" [ "-fr", d ]
     return ()
   revId _ fp = withCurrentDirectory fp $ do
-    git <- findExecutable' "svn"
+    git <- findExecutable' "git"
     out <- runInteractiveProcess' git ["rev-parse", "--verify","HEAD"] Nothing Nothing $ \(_,o,_) -> hGetContents o
-    return $ head . lines $ out
+    return $ myHead "2" . lines $ out
   isRepoClean _ = do
     git <- findExecutable' "git"
     out <- runInteractiveProcess' git ["diff"] Nothing Nothing $ \(_,o,_) -> hGetContents o
@@ -395,7 +415,7 @@ instance Repo MercurialRepoData where
   revId _ fp = withCurrentDirectory fp $ do
     hg <- findExecutable' "hg"
     out <- runInteractiveProcess' hg ["log", "-l1"] Nothing Nothing $ \(_,o,_) -> hGetContents o
-    return $ dropWhile (/= ':') . dropWhile (/= ':') . head . lines $ out
+    return $ drop 1 . dropWhile (/= ':') . drop 1 .  dropWhile (/= ':') . myHead "3" . lines $ out
   isRepoClean _ = do
     hg <- findExecutable' "hg"
     out <- runInteractiveProcess' hg ["diff"] Nothing Nothing $ \(_,o,_) -> hGetContents o
@@ -456,12 +476,19 @@ readFileStrict fp = do
 
 -- changing the number of lines will break replace (and the existing files
 -- containing repo infos as well)
-attr name distFileName sha256 = [
-      "  " ++ name ++ " = args: with args; fetchurl { # " ++ ( formatTime defaultTimeLocale "%c" (unsafePerformIO getCurrentTime) )
-    , "    url = \"http://mawercer.de/~nix/repos/" ++ distFileName ++ "\";"
-    , "    sha256 = " ++ show (sha256 :: String) ++ ";"
-    , "  };"
-    ]
+attr name distFileName sha256 = 
+  let
+#ifdef OLDTIME
+      tStr = unsafePerformIO $ liftM (calendarTimeToString) $ toCalendarTime =<< getClockTime
+#else
+      tStr = formatTime defaultTimeLocale "%c" (unsafePerformIO getCurrentTime) 
+#endif
+  in  [
+        "  " ++ name ++ " = args: with args; fetchurl { # " ++ tStr
+      , "    url = \"http://mawercer.de/~nix/repos/" ++ (takeFileName  distFileName) ++ "\";"
+      , "    sha256 = " ++ show (sha256 :: String) ++ ";"
+      , "  };"
+      ]
 
 
 replace :: String -> String -> String -> String -> String
@@ -500,15 +527,15 @@ doWork h (Config repoDir repos) cmd args mbFileToUpdate = do
            let checkCleanness = withCurrentDirectory thisRepo $ do
                     -- don't craete a new dist file if the repo is dirty
                    isClean <- isRepoClean r
-                   ignoreDirty <- (getEnv "IGNORE_DIRTY" >> return True) `E.catch` (\_ -> return  False)
+                   ignoreDirty <- (getEnv "IGNORE_DIRTY" >> return True) `E.catch` (\(_ :: SomeException) -> return  False)
                    when ((not isClean) && (not ignoreDirty)) $ do
                      error $ "the working directory of " ++n ++" is dirty !, set IGNORE_DIRTY to ignore this test"
 
-           checkCleanness
            de <- doesDirectoryExist thisRepo
            if de then do
+                 checkCleanness
                  putStrLn $ "\n\nupdating " ++ n
-                 fetch <- (getEnv "NO_FETCH" >> return False) `E.catch` (\_ -> return  True)
+                 fetch <- (getEnv "NO_FETCH" >> return False) `E.catch` (\(_ :: SomeException) -> return  True)
                  if fetch then repoUpdate repo thisRepo
                           else return $ ExitSuccess
                else do
@@ -536,8 +563,13 @@ doWork h (Config repoDir repos) cmd args mbFileToUpdate = do
            hPutStrLn h str
            putStrLn str
            h <- openFile revLog AppendMode
-           t <- liftM (formatTime defaultTimeLocale "%c") getCurrentTime
-           hPutStrLn h (rId ++ " # " ++ t) >> hClose h
+
+#ifdef OLDTIME
+           tStr <- liftM (calendarTimeToString) $ toCalendarTime =<< getClockTime
+#else
+           tStr <- formatTime defaultTimeLocale "%c" =<< getCurrentTime)
+#endif
+           hPutStrLn h (rId ++ " # " ++ tStr) >> hClose h
         publish r@(RepoInfo n _ repo _) = do
            let thisRepo = repoDir </> n -- copied some lines above
            let distDir = repoDir </> "dist"
@@ -563,7 +595,7 @@ tempDir = do
   return d
   -- t <- getTemporaryDirectory
   -- l <- filterM ( not . doesDirectoryExist) $ [ t </> "nix_repository_manager" ++ (show i) | i <- [1..] ]
-  -- return $ head l
+  -- return $ myHead "4" l
 
 -- copied from HUnit
 withCurrentDirectory :: FilePath -> IO a -> IO a
@@ -573,6 +605,7 @@ withCurrentDirectory path f = do
     finally f (setCurrentDirectory cur)
 
 main = do
+  print "helloi go"
   p <- getProgName
   h <- openFile ("/tmp/" ++ p) AppendMode
   hPutStrLn h "=  ======================================================="
