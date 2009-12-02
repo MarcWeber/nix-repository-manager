@@ -1,0 +1,25 @@
+Name:            nix-repository-manager
+category:        Utils
+synopsis:        manage source from repositories: download them, create distribution files etc.
+version:         0.0.1
+Cabal-Version: >=1.2
+build-type:      Simple
+LICENSE: GPL
+
+Flag tests
+  Default: False
+
+
+executable     nix-repository-manager
+  main-is:      Main.hs
+  build-depends: mtl, directory, base >= 4, old-time, filepath, process, old-locale, Glob, bytestring, parsec >= 3
+  hs-source-dirs: src
+  other-modules: Utils
+  ghc-options: -Wall
+
+executable     tests
+  main-is:      Test.hs
+  build-depends: mtl, directory, base >= 4, old-time, filepath, process, old-locale, Glob, bytestring, HUnit, parsec >= 3
+  hs-source-dirs: src
+  if !flag(tests)
+    buildable: False

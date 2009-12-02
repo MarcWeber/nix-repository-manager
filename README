@@ -1,0 +1,41 @@
+nix-repository-manager2
+=======================
+
+This is the second version of my helper application which
+updates head repositories automatically.
+
+This version implements source regions.
+They are updated on request.
+
+
+EXAMPLE:
+========
+
+nix-repository-manager $DIR_CONTAINING_NIX_FILES --update hack-nix
+
+initial file:
+
+{
+  myPackage = stdenv.mkDerivation {
+    # REGION AUTO UPDATE:        { name="hack-nix"; type="git"; url="git://github.com/MarcWeber/hack-nix.git"; groups="haskell_packages"; }
+    # END
+    a = 20;
+  }
+}
+
+run nix-repository-manager $DIR_CONTAINING_NIX_FILES --update hack-nix to make
+it fill in the source location based on the options found in the comments.
+Lookup sourceFromHead in nixpkgs to learn about everything else
+
+{
+  myPackage = stdenv.mkDerivation {
+    # REGION AUTO UPDATE:        { name="hack-nix"; type="git"; url="git://github.com/MarcWeber/hack-nix.git"; groups="haskell_packages"; }
+    src = sourceFromHead "hack-nix-07c4f810c13183325cd920919e7fb3d2f9128bce.tar.gz"
+                         (fetchurl { url = "http://mawercer.de/~nix/repos/hack-nix-07c4f810c13183325cd920919e7fb3d2f9128bce.tar.gz"; sha256 = "2a6fca6dfb7b832e8b3c30df7210a68499f41e5d82dcfa36520854425a89c6e2"; });
+    # END
+    a = 20;
+  }
+}
+
+Every time you update packages the resulting revision number is logged to a file.
+This way you can track down regressions faster.
