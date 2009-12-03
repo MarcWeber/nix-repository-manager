@@ -11,31 +11,49 @@ They are updated on request.
 EXAMPLE:
 ========
 
-nix-repository-manager $DIR_CONTAINING_NIX_FILES --update hack-nix
-
 initial file:
 
 {
   myPackage = stdenv.mkDerivation {
-    # REGION AUTO UPDATE:        { name="hack-nix"; type="git"; url="git://github.com/MarcWeber/hack-nix.git"; groups="haskell_packages"; }
+    # REGION AUTO UPDATE:        { name="hack-nix"; type="git"; url="git://github.com/MarcWeber/hack-nix.git"; groups="haskell_packages group2"; }
     # END
     a = 20;
   }
 }
 
-run nix-repository-manager $DIR_CONTAINING_NIX_FILES --update hack-nix to make
-it fill in the source location based on the options found in the comments.
-Lookup sourceFromHead in nixpkgs to learn about everything else
+Run this command to make the tool fill in source information based on the options found in the coment string:
+
+  $ nix-repository-manager $DIR_CONTAINING_NIX_FILES --update hack-nix
+
+yields:
+
+  # REGION AUTO UPDATE: ...
+  src = sourceFromHead "hack-nix-07c4f810c13183325cd920919e7fb3d2f9128bce.tar.gz"
+                       (throw "not published");
+  # END
+
+
+Use --publish to copy the local distribution file on a server and add a
+fechurl call so that the snapshot can be used by everyone:
+
+  # REGION AUTO UPDATE:        { name="hack-nix"; type="git"; url="git://github.com/MarcWeber/hack-nix.git"; groups="haskell_packages"; }
+  src = sourceFromHead "hack-nix-07c4f810c13183325cd920919e7fb3d2f9128bce.tar.gz"
+                       (fetchurl { url = "http://mawercer.de/~nix/repos/hack-nix-07c4f810c13183325cd920919e7fb3d2f9128bce.tar.gz"; sha256 = "2a6fca6dfb7b832e8b3c30df7210a68499f41e5d82dcfa36520854425a89c6e2"; });
+  # END
+
+
+A region is updated when either the name or one word of the groups string
+matches any additional argument which is "hack-nix" in this example.
+
+local disk locations:
+${NIX_REPOSITORY_MANAGER_REPO_DIR}/dist/$name.tar.gz  # the snapshot file
+${NIX_REPOSITORY_MANAGER_REPO_DIR}/$name              # the repository
+${NIX_REPOSITORY_MANAGER_REPO_DIR}/$name.log          # update log containing rev number and date
+
+
+Make nix know about this location by putting this into your ~/.nixpkgs/config.nix:
 
 {
-  myPackage = stdenv.mkDerivation {
-    # REGION AUTO UPDATE:        { name="hack-nix"; type="git"; url="git://github.com/MarcWeber/hack-nix.git"; groups="haskell_packages"; }
-    src = sourceFromHead "hack-nix-07c4f810c13183325cd920919e7fb3d2f9128bce.tar.gz"
-                         (fetchurl { url = "http://mawercer.de/~nix/repos/hack-nix-07c4f810c13183325cd920919e7fb3d2f9128bce.tar.gz"; sha256 = "2a6fca6dfb7b832e8b3c30df7210a68499f41e5d82dcfa36520854425a89c6e2"; });
-    # END
-    a = 20;
-  }
+  sourceFromHead.useLocalRepos = builtins.getEnv "NIX_REPOSITORY_MANAGER_REPO_DIR";
+  sourceFromHead.useLocalRepos = true; # set to false to fetch sources given by fetchurl command
 }
-
-Every time you update packages the resulting revision number is logged to a file.
-This way you can track down regressions faster.
