@@ -54,6 +54,6 @@ ${NIX_REPOSITORY_MANAGER_REPO_DIR}/$name.log          # update log containing re
 Make nix know about this location by putting this into your ~/.nixpkgs/config.nix:
 
 {
-  sourceFromHead.useLocalRepos = builtins.getEnv "NIX_REPOSITORY_MANAGER_REPO_DIR";
+  sourceFromHead.managedRepoDir = builtins.getEnv "NIX_REPOSITORY_MANAGER_REPO_DIR";
   sourceFromHead.useLocalRepos = true; # set to false to fetch sources given by fetchurl command
 }

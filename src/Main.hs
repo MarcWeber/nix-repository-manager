@@ -142,6 +142,7 @@ class Repo r where
   createTarGz :: r -- type dummy
                 -> FilePath  -- repo directory 
                 -> FilePath -- target .tar.gz 
+                -> FilePath -- tmp dir
                 -> IO ()
 
   repoGet ::  r -> String -> IO ExitCode
@@ -167,7 +168,7 @@ class Repo r where
 -- ============= instances ==============================================
 
 instance Repo RepoInfo where
-  createTarGz (RepoInfo _ _ r ) b c = createTarGz r b c
+  createTarGz (RepoInfo _ _ r ) b c d = createTarGz r b c d
   repoGet (RepoInfo _ _ r) = repoGet r
   isRepoClean (RepoInfo _ _ r) = isRepoClean r
   repoUpdate (RepoInfo _ _ r) = repoUpdate r
@@ -180,12 +181,12 @@ instance Repo RepoInfo where
            -- (maybe [Sha256] (map read . words) $ lookup "hash" map) [>Hash to use 
   
 instance Repo Repository where
-  createTarGz (DarcsRepo r ) b c = createTarGz r b c
-  createTarGz (SVNRepo r ) b c = createTarGz r b c
-  createTarGz (CVSRepo r ) b c = createTarGz r b c
-  createTarGz (GitRepo r ) b c = createTarGz r b c
-  createTarGz (BZRRepo r ) b c = createTarGz r b c
-  createTarGz (MercurialRepo r ) b c = createTarGz r b c
+  createTarGz (DarcsRepo r ) b c d = createTarGz r b c d
+  createTarGz (SVNRepo r ) b c d = createTarGz r b c d
+  createTarGz (CVSRepo r ) b c d = createTarGz r b c d
+  createTarGz (GitRepo r ) b c d = createTarGz r b c d
+  createTarGz (BZRRepo r ) b c d = createTarGz r b c d
+  createTarGz (MercurialRepo r ) b c d = createTarGz r b c d
   parseFromConfig map' = do
     repoType <- lookup "type" map'
     case repoType of
@@ -237,8 +238,7 @@ instance Repo DarcsRepoData where
 
   repoUpdate (DarcsRepoData url _) dest = rawSystemVerbose "darcs" $ ["pull", "-a", "--repodir=" ++ dest, url ]
 
-  createTarGz _ dir destFile = do
-    d <- tempDir
+  createTarGz _ dir destFile d = do
     rawSystemVerbose "cp" [ "-r", dir, d ]
     removeDevFiles d
     rawSystemVerbose "rm" [ "-fr", (d </> "_darcs") ]
@@ -246,6 +246,7 @@ instance Repo DarcsRepoData where
     rawSystemVerbose "rm" [ "-fr", (d </> "_togit") ]
     rawSystemVerbose "sh" [ "-c", "[ -f *etup.*hs ] && rm -fr dist" ] -- clean.. else cabal will not be able to recognize that it should recompile the files -> trouble 
     rawSystemVerbose "tar" [  "cfz", destFile, "-C", takeDirectory d, takeFileName d]
+    rawSystemVerbose "chmod" [ "-R", "777","."]
     rawSystemVerbose "rm" [ "-fr", d ]
     return ()
   -- system ["darcs", "get", "--partial"]
@@ -281,13 +282,11 @@ instance Repo SVNRepoData where
     return $ SVNRepoData url $ lookup "r" map'
   repoGet (SVNRepoData url revision) dest = rawSystemVerbose "svn" $ ["checkout", url] ++ (maybe ["-rHEAD"] (\r -> ["-r" ++ r]) revision) ++ [dest]
 
-  createTarGz _ dir destFile = do
-    d <- tempDir
+  createTarGz _ dir destFile d = do
     rawSystemVerbose "cp" [ "-r", dir, d ]
     removeDevFiles d
     rawSystemVerbose "/bin/sh" [ "-c", "find " ++ (show d) ++ " -type d -name \".svn\" | xargs rm -fr " ]
     rawSystemVerbose "tar" [  "cfz", destFile, "-C", takeDirectory d, takeFileName d]
-    rawSystemVerbose "rm" [ "-fr", d ]
     return ()
   revId _ fp = withCurrentDirectory fp $ do
     svn <- findExecutable' "svn"
@@ -321,13 +320,11 @@ instance Repo CVSRepoData where
   repoUpdate (CVSRepoData _ _) dest =
     withCurrentDirectory dest $ rawSystemVerbose "cvs" $ ["update"]
 
-  createTarGz _ dir destFile = do
-    d <- tempDir
+  createTarGz _ dir destFile d = do
     rawSystemVerbose "cp" [ "-r", dir, d ]
     removeDevFiles d
-    rawSystemVerbose "/bin/sh" [ "-c", "find " ++ (show d) ++ " -type d -name \"CVS\" | rm -fr " ]
+    rawSystemVerbose "/bin/sh" [ "-c", "find " ++ (show d) ++ " -type d -name \"CVS\" | xargs rm -fr " ]
     rawSystemVerbose "tar" [  "cfz", destFile, "-C", takeDirectory d, takeFileName d]
-    rawSystemVerbose "rm" [ "-fr", d ]
     return ()
   isRepoClean _ = do
     print "isRepoClean to be implemented for cvs, returning True"
@@ -343,13 +340,11 @@ instance Repo GitRepoData where
     rawSystemVerbose "git" ["clone", url, dest]
   repoUpdate (GitRepoData _) dest =
     withCurrentDirectory dest $ rawSystemVerbose "git" [ "pull"]
-  createTarGz _ dir destFile = do
-    d <- tempDir
+  createTarGz _ dir destFile d = do
     rawSystemVerbose "cp" [ "-r", dir, d ]
     removeDevFiles d
     rawSystemVerbose "rm" [ "-fr", d </> ".git" ]
     rawSystemVerbose "tar" [  "cfz", destFile, "-C", takeDirectory d, takeFileName d]
-    rawSystemVerbose "rm" [ "-fr", d ]
     return ()
   revId _ fp = withCurrentDirectory fp $ do
     git <- findExecutable' "git"
@@ -370,13 +365,11 @@ instance Repo BZRRepoData where
     rawSystemVerbose "bzr" ["branch", url, dest]
   repoUpdate (BZRRepoData _) dest =
     withCurrentDirectory dest $ rawSystemVerbose "bzr" [ "update"] -- TODO: fix url when it has changed 
-  createTarGz _ dir destFile = do
-    d <- tempDir
+  createTarGz _ dir destFile d = do
     removeDevFiles d
     rawSystemVerbose "cp" [ "-r", dir, d ]
     rawSystemVerbose "rm" [ "-fr", d </> ".bzr" ]
     rawSystemVerbose "tar" [  "cfz", destFile, "-C", takeDirectory d, takeFileName d]
-    rawSystemVerbose "rm" [ "-fr", d ]
     return ()
   isRepoClean _ = do
     print "isRepoClean to be implemented for bzr, returning True"
@@ -394,13 +387,11 @@ instance Repo MercurialRepoData where
     rawSystemVerbose "hg" ["clone", url, dest]
   repoUpdate (MercurialRepoData  _) dest =
     withCurrentDirectory dest $ rawSystemVerbose "hg" [ "pull"]
-  createTarGz _ dir destFile = do
-    d <- tempDir
+  createTarGz _ dir destFile d = do
     rawSystemVerbose "cp" [ "-r", dir, d ]
     removeDevFiles d
     rawSystemVerbose "rm" [ "-fr", d </> ".hg" ]
     rawSystemVerbose "tar" [  "cfz", destFile, "-C", takeDirectory d, takeFileName d]
-    rawSystemVerbose "rm" [ "-fr", d ]
     return ()
   revId _ fp = withCurrentDirectory fp $ do
     hg <- findExecutable' "hg"
@@ -429,7 +420,8 @@ rawSystemVerbose :: String -> [String] -> IO ExitCode
 rawSystemVerbose app args = do
   let cmd = unwords (app:args) -- add quotes? 
   putStrLn $ "running " ++ cmd
-  ec <- rawSystem app args
+  ph <- runProcess app args Nothing Nothing Nothing Nothing Nothing
+  ec <- waitForProcess ph
   case ec of
     ExitSuccess -> return ec
     ExitFailure c -> do
@@ -522,7 +514,7 @@ updateRepoTarGz thisRepo r n distFileF distFileLocation = do
          createDirectoryIfMissing True thisRepo
          repoGet r thisRepo
   distFileName <- liftM distFileF (revId r thisRepo)
-  createTarGz r thisRepo distFileName
+  withTmpDir $ createTarGz r thisRepo distFileName
   writeFile distFileLocation distFileName
 
 
@@ -542,15 +534,18 @@ doWork repoDir nixFiles cmd args = do
   let doWorkOnItem :: FilePath -> Item -> IO Item
       doWorkOnItem path i@(IReg (Region ind opts contents map') ) = do
         -- l1, l2 = the two lines = content of the region 
-        let (l1,l2) = case contents of
-              [] -> ( (BS.unpack ind) ++ "src = sourceFromHead (throw \"relative-distfile-path\")", "(throw \"not published\")")
-              l@[a, b] -> (BS.unpack a, BS.unpack b)
         case lookup "name" map' of
           Nothing -> do
             warning $ " no name attr found in " ++ (show opts) ++ " in file " ++ path
             return i
           Just n -> do
-            let groups = maybe [] words $ lookup "groups" map'
+            let extraInd = "             "
+                (l1,l2) = case contents of
+                  [] -> ( (BS.unpack ind) ++ "src = sourceFromHead (throw \"relative-distfile-path\")"
+                        , (BS.unpack ind) ++ extraInd ++ "(throw \"source not not published yet: " ++ n ++ "\");")
+                  l@[a, b] -> (BS.unpack a, BS.unpack b)
+
+                groups = maybe [] words $ lookup "groups" map'
 
             if (any (`elem` args) ([n] ++ groups)) then
                 -- item was selected 
@@ -568,8 +563,8 @@ doWork repoDir nixFiles cmd args = do
                       publish' = do
                         distFile <- publishRepo r distFileLocation
                         hash <- createHash distFile Sha256 (distFile ++ ".sha256")
-                        return (l1, (BS.unpack ind) ++ "             (fetchurl { url = \"http://mawercer.de/~nix/repos/" ++ (takeFileName distFile) ++ "\"; sha256 = \"" ++ hash ++ "\"; });")
-                      fstLine n = (BS.unpack ind) ++ "src = sourceFromHead " ++ BS.unpack ind ++ "\"" ++ (makeRelative distDir n) ++ "\""
+                        return (l1, (BS.unpack ind) ++ extraInd ++ "(fetchurl { url = \"http://mawercer.de/~nix/repos/" ++ (takeFileName distFile) ++ "\"; sha256 = \"" ++ hash ++ "\"; });")
+                      fstLine n = (BS.unpack ind) ++ "src = sourceFromHead " ++ "\"" ++ (makeRelative distDir n) ++ "\""
                       update = do
                         updateRepoTarGz thisRepo r n distFileF distFileLocation
                         rev <- revId r thisRepo
@@ -615,12 +610,20 @@ createHash dist hash dest = do
   writeFile dest $ "\"" ++ h ++ "\""
   return h
 
-tempDir :: IO FilePath
-tempDir = do
+withTmpDir :: (FilePath -> IO ()) -> IO ()
+withTmpDir act = do
   let d = "/tmp/nix_repsoitory_manager_tmp_dir"
-  de <- doesDirectoryExist d
-  when de $ rawSystemVerbose "rm" [ "-fr", d] >> return ()
-  return d
+  let clean = do
+        de <- doesDirectoryExist d
+        when de $ do
+          rawSystemVerbose "chmod" [ "-R", "777",d]
+          rawSystemVerbose "rm" [ "-fr", d] >> return ()
+  clean
+  createDirectoryIfMissing True d
+  act d
+  clean
+
+  
   -- t <- getTemporaryDirectory
   -- l <- filterM ( not . doesDirectoryExist) $ [ t </> "nix_repository_manager" ++ (show i) | i <- [1..] ]
   -- return $ myHead "4" l
