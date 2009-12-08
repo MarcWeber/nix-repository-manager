@@ -77,6 +77,19 @@ class Repo r where
                 -> FilePath -- tmp dir
                 -> IO ()
 
+  createTarGz r dir destFile d = do
+    rawSystemVerbose "cp" [ "-r", dir, d ]
+    removeDevFiles d
+    clean r d
+    rawSystemVerbose "tar" [  "cfz", destFile, "-C", takeDirectory d, takeFileName d]
+    rawSystemVerbose "chmod" [ "-R", "777","."]
+    rawSystemVerbose "rm" [ "-fr", d ]
+    return ()
+
+  -- remove vcs directories etc 
+  clean :: r -> String -> IO ()
+  clean _ _ = return ()  
+
   repoGet ::  r -> String -> IO ExitCode
   repoGet = repoUpdate
 
@@ -170,17 +183,13 @@ instance Repo DarcsRepoData where
 
   repoUpdate (DarcsRepoData url _) dest = rawSystemVerbose "darcs" $ ["pull", "-a", "--repodir=" ++ dest, url ]
 
-  createTarGz _ dir destFile d = do
-    rawSystemVerbose "cp" [ "-r", dir, d ]
-    removeDevFiles d
+  clean _ d = do
     rawSystemVerbose "rm" [ "-fr", (d </> "_darcs") ]
     -- I'm using darcs-git-import to browse history, so remove the _togit directory as well
     rawSystemVerbose "rm" [ "-fr", (d </> "_togit") ]
     rawSystemVerbose "sh" [ "-c", "[ -f *etup.*hs ] && rm -fr dist" ] -- clean.. else cabal will not be able to recognize that it should recompile the files -> trouble 
-    rawSystemVerbose "tar" [  "cfz", destFile, "-C", takeDirectory d, takeFileName d]
-    rawSystemVerbose "chmod" [ "-R", "777","."]
-    rawSystemVerbose "rm" [ "-fr", d ]
     return ()
+
   -- system ["darcs", "get", "--partial"]
   revId _ fp = withCurrentDirectory fp $ do
     let p = "nrmtag"
@@ -214,12 +223,10 @@ instance Repo SVNRepoData where
     return $ SVNRepoData url $ lookup "r" map'
   repoGet (SVNRepoData url revision) dest = rawSystemVerbose "svn" $ ["checkout", url] ++ (maybe ["-rHEAD"] (\r -> ["-r" ++ r]) revision) ++ [dest]
 
-  createTarGz _ dir destFile d = do
-    rawSystemVerbose "cp" [ "-r", dir, d ]
-    removeDevFiles d
+  clean _ d = do
     rawSystemVerbose "/bin/sh" [ "-c", "find " ++ (show d) ++ " -type d -name \".svn\" | xargs rm -fr " ]
-    rawSystemVerbose "tar" [  "cfz", destFile, "-C", takeDirectory d, takeFileName d]
     return ()
+
   revId _ fp = withCurrentDirectory fp $ do
     svn <- findExecutable' "svn"
     out <- runInteractiveProcess' svn ["info"] Nothing Nothing $ \(_,o,_) -> hGetContents o
@@ -252,12 +259,10 @@ instance Repo CVSRepoData where
   repoUpdate (CVSRepoData _ _) dest =
     withCurrentDirectory dest $ rawSystemVerbose "cvs" $ ["update"]
 
-  createTarGz _ dir destFile d = do
-    rawSystemVerbose "cp" [ "-r", dir, d ]
-    removeDevFiles d
+  clean _ d = do
     rawSystemVerbose "/bin/sh" [ "-c", "find " ++ (show d) ++ " -type d -name \"CVS\" | xargs rm -fr " ]
-    rawSystemVerbose "tar" [  "cfz", destFile, "-C", takeDirectory d, takeFileName d]
     return ()
+
   isRepoClean _ = do
     print "isRepoClean to be implemented for cvs, returning True"
     return True
@@ -272,12 +277,10 @@ instance Repo GitRepoData where
     rawSystemVerbose "git" ["clone", url, dest]
   repoUpdate (GitRepoData _) dest =
     withCurrentDirectory dest $ rawSystemVerbose "git" [ "pull"]
-  createTarGz _ dir destFile d = do
-    rawSystemVerbose "cp" [ "-r", dir, d ]
-    removeDevFiles d
+  clean _ d = do
     rawSystemVerbose "rm" [ "-fr", d </> ".git" ]
-    rawSystemVerbose "tar" [  "cfz", destFile, "-C", takeDirectory d, takeFileName d]
     return ()
+
   revId _ fp = withCurrentDirectory fp $ do
     git <- findExecutable' "git"
     out <- runInteractiveProcess' git ["rev-parse", "--verify","HEAD"] Nothing Nothing $ \(_,o,_) -> hGetContents o
@@ -297,11 +300,8 @@ instance Repo BZRRepoData where
     rawSystemVerbose "bzr" ["branch", url, dest]
   repoUpdate (BZRRepoData _) dest =
     withCurrentDirectory dest $ rawSystemVerbose "bzr" [ "update"] -- TODO: fix url when it has changed 
-  createTarGz _ dir destFile d = do
-    removeDevFiles d
-    rawSystemVerbose "cp" [ "-r", dir, d ]
+  clean _ d = do
     rawSystemVerbose "rm" [ "-fr", d </> ".bzr" ]
-    rawSystemVerbose "tar" [  "cfz", destFile, "-C", takeDirectory d, takeFileName d]
     return ()
   isRepoClean _ = do
     print "isRepoClean to be implemented for bzr, returning True"
@@ -319,11 +319,8 @@ instance Repo MercurialRepoData where
     rawSystemVerbose "hg" ["clone", url, dest]
   repoUpdate (MercurialRepoData  _) dest =
     withCurrentDirectory dest $ rawSystemVerbose "hg" [ "pull"]
-  createTarGz _ dir destFile d = do
-    rawSystemVerbose "cp" [ "-r", dir, d ]
-    removeDevFiles d
+  clean _ d = do
     rawSystemVerbose "rm" [ "-fr", d </> ".hg" ]
-    rawSystemVerbose "tar" [  "cfz", destFile, "-C", takeDirectory d, takeFileName d]
     return ()
   revId _ fp = withCurrentDirectory fp $ do
     hg <- findExecutable' "hg"
@@ -365,7 +362,9 @@ updateRepoTarGz thisRepo r n distFileF distFileLocation = do
          createDirectoryIfMissing True thisRepo
          repoGet r thisRepo
   distFileName <- liftM distFileF (revId r thisRepo)
-  withTmpDir $ createTarGz r thisRepo distFileName
+  withTmpDir $ \d -> do
+    removeDirectory d -- it will be created by cp again 
+    createTarGz r thisRepo distFileName d
   writeFile distFileLocation distFileName
 
 

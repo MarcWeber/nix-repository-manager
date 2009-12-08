@@ -60,7 +60,8 @@ repoAndNameFromMap opts path map' =
       name <- maybe (fail nameNotFound) return $ lookup "name" map'
       repo <- maybe (fail missingAttrs) return $ parseFromConfig map'
       return $ (repo, name)
-
+whenSelected :: (Eq a, Monad m) =>
+                [a] -> [a] -> a1 -> m a1 -> m a1
 whenSelected args names contents f =
     if not (any (`elem` args) names )
       then return contents -- nothing to do 
@@ -125,7 +126,7 @@ updateSourceRegionAction (IRegionData ind opts contents map' _)
 {-
  a hacknix region looks like this:
 
-  # REGION AUTO UPDATE: { name="haxe"; type="cvs"; cvsRoot=":pserver:anonymous@cvs.motion-twin.com:/cvsroot"; module="haxe"; groups="haxe_group"; }
+  # REGION HACK_NIX: { name="haxe"; type="cvs"; cvsRoot=":pserver:anonymous@cvs.motion-twin.com:/cvsroot"; module="haxe"; groups="haxe_group"; }
   {
     ... hack nix cabal description
     src =  ..
@@ -134,6 +135,8 @@ updateSourceRegionAction (IRegionData ind opts contents map' _)
   where src is the same as pasted by sourceRegion
   The cabal description is created by hack-nix --to-nix
   # END
+
+  -- TODO: run ./Setup dist instead of tar ! 
 -}
 
 hacknixRegion =
@@ -146,7 +149,7 @@ hacknixRegion =
               indent = map (ind `BS.append`)
               distDir = repoDir </> "dist"
           do -- Either / Error monad 
-          (r, n') <- repoAndNameFromMap opts path map'
+          (_, n') <- repoAndNameFromMap opts path map'
           srcContents <- updateSourceRegionAction (i { rContents = srcOld}) path workAction args repoDir
           distSrcFile <- lift $ liftM (BS.unpack) $ BS.readFile $ distDir </> n'
           let nameR = (dropExtension . takeFileName) distSrcFile
@@ -157,7 +160,7 @@ hacknixRegion =
             when (not e) $ do
               lift $ withTmpDir $ \tmp -> withCurrentDirectory tmp $
                 do
-                  rawSystemVerbose "tar" ["xfz", distSrcFile]
+                  rawSystemVerbose "tar" ["xfz", distSrcFile, "--strip-components=1"]
                   rawSystemVerbose "hack-nix" ["--to-nix"]
                   nixFiles' <- liftM (head . fst) $ globDir [compile "*/*.nix"] "dist" 
                   file <- maybe (fail "hack-nix --to-nix didn't write a dist/*.nix file")

@@ -58,9 +58,6 @@ import qualified Data.ByteString.Char8 as BS
 myHead :: String -> [a] -> a
 myHead _ l = head l
 
-path :: String
-path = "pkgs/misc/bleeding-edge-fetch-infos.nix"
-
 printUsage :: IO ()
 printUsage = do
   name <- getProgName
@@ -129,7 +126,7 @@ doWork repoDir nixFiles' cmd args = do
 
             doWorkOnFile (NixFile path' items) = do
                 items' <- mapM (doWorkOnItem path') items
-                when (items' /= items) $ writeNixFile $ NixFile path items'
+                when (items' /= items) $ writeNixFile $ NixFile path' items'
             
         mapM_ doWorkOnFile nixFiles'
 
