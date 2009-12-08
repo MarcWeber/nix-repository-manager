@@ -1,5 +1,8 @@
 {-# LANGUAGE CPP #-}
 module NixFile where
+import System.Directory
+import Control.Monad.Error
+import Data.Maybe
 import Data.Char
 import Util
 import System.FilePath
@@ -18,8 +21,8 @@ import Text.Parsec.ByteString (Parser)
 
 import qualified Data.ByteString.Char8 as BS
 
+type ErrorWithIO e a = ErrorT e IO a
 
--- very simple. Token is a recognize 
 data NixFile = NixFile FilePath [ Item ]
 
 type RegionContents = [BS.ByteString]
@@ -33,12 +36,7 @@ type ActionFun =
           -> Action
           )
 
-data Action = Action (Either String -- failure
-                        (IO (Either (IO Action) -- another action is required. I'd like to separate disk IO intensive tasks from nework tasks such as git clone later
-                            [BS.ByteString]       -- new region contens
-                            )
-                       ))
-
+type Action = ErrorWithIO String [BS.ByteString] -- new region contens
 
 data Region = Region {
   regStart :: BS.ByteString,
@@ -53,68 +51,132 @@ allRegions = [ sourceRegion, hacknixRegion ]
 region :: String -> String -> ActionFun -> Region
 region a b = Region (BS.pack a) (BS.pack b)
 
+repoAndNameFromMap :: BS.ByteString -> FilePath -> RepoConfig -> ErrorWithIO String (RepoInfo, String)
+repoAndNameFromMap opts path map' = 
+    let nameNotFound, missingAttrs :: String
+        nameNotFound = "no name attr found in " ++ (show opts) ++ " in file " ++ path
+        missingAttrs = "WARNING: missing attrs in section of file " ++ (show . (lookup "file")) map'
+    in do
+      name <- maybe (fail nameNotFound) return $ lookup "name" map'
+      repo <- maybe (fail missingAttrs) return $ parseFromConfig map'
+      return $ (repo, name)
+
+whenSelected args names contents f =
+    if not (any (`elem` args) names )
+      then return contents -- nothing to do 
+    else f
+{-
+ a source region looks like this:
+
+  # REGION AUTO UPDATE: { name="haxe"; type="cvs"; cvsRoot=":pserver:anonymous@cvs.motion-twin.com:/cvsroot"; module="haxe"; groups="haxe_group"; }
+    content = "1";
+  # END
+-}
+
+
 sourceRegion, hacknixRegion :: Region
 sourceRegion = 
-      region "# REGION AUTO UPDATE"  "# END" action'
-  where action' :: ActionFun
-        action' (IRegionData ind opts contents map' _)
+      region "# REGION AUTO UPDATE"  "# END" updateSourceRegionAction
+updateSourceRegionAction :: ActionFun
+updateSourceRegionAction (IRegionData ind opts contents map' _)
                path workAction args
                repoDir
-               = Action $
-            -- l1, l2 = the two lines = content of the region 
-          case lookup "name" map' of
-                Nothing -> do
-                  Left $ "no name attr found in " ++ (show opts) ++ " in file " ++ path
-                Just n -> do
+               = do -- Either / Error monad 
+                  (r, n') <- repoAndNameFromMap opts path map'
+                  -- l1, l2 = the two lines = content of the region 
                   let extraInd = "             "
                       (l1,l2) = case contents of
                         [] -> ( (BS.unpack ind) ++ "src = sourceFromHead (throw \"relative-distfile-path\")"
-                              , (BS.unpack ind) ++ extraInd ++ "(throw \"source not not published yet: " ++ n ++ "\");")
+                              , (BS.unpack ind) ++ extraInd ++ "(throw \"source not not published yet: " ++ n' ++ "\");")
                         [a, b] -> (BS.unpack a, BS.unpack b)
                         _ -> error $ "wrong line count found in region in file " ++ path  -- should not occur 
 
                       groups = maybe [] words $ lookup "groups" map'
+                  
+                  whenSelected args ([n'] ++ groups) contents $ do
+                         do -- do the selected work 
+                         let thisRepo = repoDir </> n' -- copied some lines below 
+                             distDir = repoDir </> "dist"
+                             distFileNameF rId = addExtension (n' ++ "-" ++ rId) ".tar.gz"
+                             distFileF rId = distDir </> (distFileNameF rId)
+                             -- revLog = repoDir </> (n' ++ ".log") -- copied some lines below 
+                             distFileLocation = distDir </> n'
+                             publish' = lift $ do
+                               distFile <- publishRepo r distFileLocation
+                               hash <- createHash distFile Sha256 (distFile ++ ".sha256")
+                               return (l1, (BS.unpack ind) ++ extraInd ++ "(fetchurl { url = \"http://mawercer.de/~nix/repos/" ++ (takeFileName distFile) ++ "\"; sha256 = \"" ++ hash ++ "\"; });")
+                             fstLine n'' = (BS.unpack ind) ++ "src = sourceFromHead " ++ "\"" ++ (makeRelative distDir n'') ++ "\""
+                             update = lift $ do
+                               updateRepoTarGz thisRepo r n' distFileF distFileLocation
+                               rev <- revId r thisRepo
+                               return rev
 
-                  if not (any (`elem` args) ([n] ++ groups))
-                    then Right $ return $ Right contents -- nothing to do 
-                    else
-                        -- item was selected 
-                      case parseFromConfig map' of
-                        Nothing -> do
-                          Left $ "WARNING: missing attrs in section of file " ++ (show . (lookup "file")) map'
-                        Just r@(RepoInfo n' _ _ {- repo -}) -> Right $ do -- do the selected work 
-                                let thisRepo = repoDir </> n' -- copied some lines below 
-                                    distDir = repoDir </> "dist"
-                                    distFileNameF rId = addExtension (n' ++ "-" ++ rId) ".tar.gz"
-                                    distFileF rId = distDir </> (distFileNameF rId)
-                                    -- revLog = repoDir </> (n' ++ ".log") -- copied some lines below 
-                                    distFileLocation = distDir </> n'
-                                    publish' = do
-                                      distFile <- publishRepo r distFileLocation
-                                      hash <- createHash distFile Sha256 (distFile ++ ".sha256")
-                                      return (l1, (BS.unpack ind) ++ extraInd ++ "(fetchurl { url = \"http://mawercer.de/~nix/repos/" ++ (takeFileName distFile) ++ "\"; sha256 = \"" ++ hash ++ "\"; });")
-                                    fstLine n'' = (BS.unpack ind) ++ "src = sourceFromHead " ++ "\"" ++ (makeRelative distDir n'') ++ "\""
-                                    update = do
-                                      updateRepoTarGz thisRepo r n' distFileF distFileLocation
-                                      rev <- revId r thisRepo
-                                      return rev
+                         (c, d) <- case workAction of
+                            DWUpdate -> do
+                                 rev <- update 
+                                 return (fstLine (distFileF rev), l2)
+                            DWPublish -> publish'
+                            DWUpdateThenPublish -> do
+                                 rev <- update
+                                 (_, x) <- publish'
+                                 return (fstLine (distFileF rev), x)
+                         return $ map BS.pack [c,d]
 
-                                (c, d) <- case workAction of
-                                   DWUpdate -> do
-                                        rev <- update 
-                                        return (fstLine (distFileF rev), l2)
-                                   DWPublish -> publish'
-                                   DWUpdateThenPublish -> do
-                                        rev <- update
-                                        (_, x) <- publish'
-                                        return (fstLine (distFileF rev), x)
-                                return $ Right $ map BS.pack [c,d]
+{-
+ a hacknix region looks like this:
 
+  # REGION AUTO UPDATE: { name="haxe"; type="cvs"; cvsRoot=":pserver:anonymous@cvs.motion-twin.com:/cvsroot"; module="haxe"; groups="haxe_group"; }
+  {
+    ... hack nix cabal description
+    src =  ..
+  }
+
+  where src is the same as pasted by sourceRegion
+  The cabal description is created by hack-nix --to-nix
+  # END
+-}
 
 hacknixRegion =
       region "# REGION HACK_NIX" "# END" action'
-  where action' = error "TODO"
+  where action' i@(IRegionData ind opts contents map' _)
+               path workAction args
+               repoDir
+               = do
+          let (_, srcOld, _) = splitC contents
+              indent = map (ind `BS.append`)
+              distDir = repoDir </> "dist"
+          do -- Either / Error monad 
+          (r, n') <- repoAndNameFromMap opts path map'
+          srcContents <- updateSourceRegionAction (i { rContents = srcOld}) path workAction args repoDir
+          distSrcFile <- lift $ liftM (BS.unpack) $ BS.readFile $ distDir </> n'
+          let nameR = (dropExtension . takeFileName) distSrcFile
+          let hnDist = distDir </> nameR `addExtension` ".nix"
+          (a,_,c) <- do
+            -- run hack-nix to create cabal description 
+            e <- lift $ doesFileExist hnDist
+            when (not e) $ do
+              lift $ withTmpDir $ \tmp -> withCurrentDirectory tmp $
+                do
+                  rawSystemVerbose "tar" ["xfz", distSrcFile]
+                  rawSystemVerbose "hack-nix" ["--to-nix"]
+                  nixFiles' <- liftM (head . fst) $ globDir [compile "*/*.nix"] "dist" 
+                  file <- maybe (fail "hack-nix --to-nix didn't write a dist/*.nix file")
+                                return $ listToMaybe nixFiles'
+                  copyFile file hnDist
+            lift $ liftM (splitC . BS.lines) $ BS.readFile hnDist
+          return $ (indent a) ++ srcContents ++ (indent c)
 
+        -- separate the src Region from the rest 
+        splitC :: [ BS.ByteString ] -> ([BS.ByteString], [BS.ByteString], [BS.ByteString])
+        splitC list = case break (((BS.pack "src") `BS.isPrefixOf`) . dropSpaces) list of
+          (before, src:maybeSrc:rest) ->
+            let contains' s = isJust $ BS.findSubstring (BS.pack s) maybeSrc
+            in if contains' "throw \"" || contains' "fetchurl" then
+                        (before, [src,maybeSrc], rest)
+                    else
+                        (before, [src], maybeSrc:rest)
+          (_,[]) -> ([],[],[]) -- no src? was empty. 
+          r@(_,_) -> error $ "unexpected split result" ++ show r -- should never happen unless you mess up contents yourself. If this happens empty the contents and start from scratch 
 {-
  Str: everything this tool doesn't know about
 
@@ -166,6 +228,9 @@ regions (NixFile _ items) = [ reg' | IRegion reg' <- items ]
 
 dropSpaces :: BS.ByteString -> BS.ByteString
 dropSpaces = BS.dropWhile isSpace
+
+startsWith :: BS.ByteString -> BS.ByteString -> Bool
+startsWith a = BS.isPrefixOf a . dropSpaces
 
 -- find all .nix files in directory 
 nixFiles :: FilePath -> IO [ FilePath ]

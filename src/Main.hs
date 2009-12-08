@@ -5,6 +5,7 @@
 -- OLDTIME is easier for bootstrapping
 
 module Main where
+import Control.Monad.Error
 import System.IO
 import System.Environment
 import Common
@@ -122,11 +123,7 @@ doWork repoDir nixFiles' cmd args = do
             doWorkOnItem _ i@(IStr _) = return i
             doWorkOnItem path' (IRegion region') = do
               let ir@(IRegionData _ _ cont _ reg') = region'
-                  execAction :: Action -> IO (Either String [BS.ByteString])
-                  execAction (Action (Left s)) = return $ Left s
-                  execAction (Action (Right ioAct)) = do
-                    either (>>= execAction) (return . Right) =<< ioAct
-              res <- execAction $ (action reg') ir path' cmd args repoDir
+              res <- runErrorT $ (action reg') ir path' cmd args repoDir
               newC <- either (\s -> warning s >> return cont ) return res
               return $ IRegion $ ir{ rContents = newC }
 
