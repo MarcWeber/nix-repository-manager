@@ -87,12 +87,13 @@ updateSourceRegionAction (IRegionData ind opts contents map' _)
                   -- l1, l2 = the two lines = content of the region 
                   let extraInd = "             "
                       (l1,l2) = case contents of
-                        [] -> ( (BS.unpack ind) ++ "src = sourceFromHead (throw \"relative-distfile-path\")"
+                        [] -> ( (BS.unpack ind) ++ attrName ++ " = sourceFromHead (throw \"relative-distfile-path\")"
                               , (BS.unpack ind) ++ extraInd ++ "(throw \"source not not published yet: " ++ n' ++ "\");")
                         [a, b] -> (BS.unpack a, BS.unpack b)
                         _ -> error $ "wrong line count found in region in file " ++ path  -- should not occur 
 
                       groups = maybe [] words $ lookup "groups" map'
+                      attrName = fromMaybe "src" $ lookup "srcAttrName" map'
                   
                   whenSelected args ([n'] ++ groups) contents $ do
                          do -- do the selected work 
@@ -106,7 +107,7 @@ updateSourceRegionAction (IRegionData ind opts contents map' _)
                                distFile <- publishRepo r distFileLocation
                                hash <- createHash distFile Sha256 (distFile ++ ".sha256")
                                return (l1, (BS.unpack ind) ++ extraInd ++ "(fetchurl { url = \"http://mawercer.de/~nix/repos/" ++ (takeFileName distFile) ++ "\"; sha256 = \"" ++ hash ++ "\"; });")
-                             fstLine n'' = (BS.unpack ind) ++ "src = sourceFromHead " ++ "\"" ++ (makeRelative distDir n'') ++ "\""
+                             fstLine n'' = (BS.unpack ind) ++ attrName ++ "= sourceFromHead " ++ "\"" ++ (makeRelative distDir n'') ++ "\""
                              update = lift $ do
                                updateRepoTarGz thisRepo r n' distFileF distFileLocation
                                rev <- revId r thisRepo
@@ -148,30 +149,32 @@ hacknixRegion =
           let (_, srcOld, _) = splitC contents
               indent = map (ind `BS.append`)
               distDir = repoDir </> "dist"
+              groups = maybe [] words $ lookup "groups" map'
           do -- Either / Error monad 
           (_, n') <- repoAndNameFromMap opts path map'
-          srcContents <- updateSourceRegionAction (i { rContents = srcOld}) path workAction args repoDir
-          distSrcFile <- lift $ liftM (BS.unpack) $ BS.readFile $ distDir </> n'
-          let nameR = (dropExtension . takeFileName) distSrcFile
-          let hnDist = distDir </> nameR `addExtension` ".nix"
-          (a,_,c) <- do
-            -- run hack-nix to create cabal description 
-            e <- lift $ doesFileExist hnDist
-            when (not e) $ do
-              lift $ withTmpDir $ \tmp -> withCurrentDirectory tmp $
-                do
-                  rawSystemVerbose "tar" ["xfz", distSrcFile, "--strip-components=1"]
-                  rawSystemVerbose "hack-nix" ["--to-nix"]
-                  nixFiles' <- liftM (head . fst) $ globDir [compile "*/*.nix"] "dist" 
-                  file <- maybe (fail "hack-nix --to-nix didn't write a dist/*.nix file")
-                                return $ listToMaybe nixFiles'
-                  copyFile file hnDist
-            lift $ liftM (splitC . BS.lines) $ BS.readFile hnDist
-          return $ (indent a) ++ srcContents ++ (indent c)
+          whenSelected args ([n'] ++ groups) contents $ do
+            srcContents <- updateSourceRegionAction (i { rContents = srcOld, rMap = map' ++ [("srcAttrName", "srcFile")]}) path workAction args repoDir
+            distSrcFile <- lift $ liftM (BS.unpack) $ BS.readFile $ distDir </> n'
+            let nameR = ( dropExtension . dropExtension . takeFileName) distSrcFile
+            let hnDist = distDir </> nameR `addExtension` ".nix"
+            (a,_,c) <- do
+              -- run hack-nix to create cabal description 
+              e <- lift $ doesFileExist hnDist
+              when (not e) $ do
+                lift $ withTmpDir $ \tmp -> withCurrentDirectory tmp $
+                  do
+                    rawSystemVerbose "tar" ["xfz", distSrcFile, "--strip-components=1"]
+                    rawSystemVerbose "hack-nix" ["--to-nix"]
+                    nixFiles' <- liftM (head . fst) $ globDir [compile "dist/*.nix"] "." 
+                    file <- maybe (fail "hack-nix --to-nix didn't write a dist/*.nix file")
+                                  return $ listToMaybe nixFiles'
+                    copyFile file hnDist
+              lift $ liftM (splitC . BS.lines) $ BS.readFile hnDist
+            return $ (indent a) ++ srcContents ++ (indent c)
 
         -- separate the src Region from the rest 
         splitC :: [ BS.ByteString ] -> ([BS.ByteString], [BS.ByteString], [BS.ByteString])
-        splitC list = case break (((BS.pack "src") `BS.isPrefixOf`) . dropSpaces) list of
+        splitC list = case break (((BS.pack "srcFile") `BS.isPrefixOf`) . dropSpaces) list of
           (before, src:maybeSrc:rest) ->
             let contains' s = isJust $ BS.findSubstring (BS.pack s) maybeSrc
             in if contains' "throw \"" || contains' "fetchurl" then
@@ -256,7 +259,12 @@ namesAndGroups list =
 -- very simple parser to extract regions
 parseFileStrict :: FilePath -> IO NixFile
 parseFileStrict file = do
-  liftM (NixFile file . parseF [] [] . BS.lines) $ BS.readFile file
+  lines <- liftM BS.lines $ BS.readFile file
+  if (length lines > 5000) then do
+      -- probably this is the hack-nix-db file! 
+      putStrLn $ "WARNING! not parsing " ++ file ++ " too big (TODO figure out why it takes that long parsing such a file!)"
+      return $ NixFile file [ IStr lines ]
+    else return $ (NixFile file . parseF [] []) lines
   
   where
         parseF :: [ Item ] -- already parsed 

@@ -82,7 +82,7 @@ class Repo r where
     removeDevFiles d
     clean r d
     rawSystemVerbose "tar" [  "cfz", destFile, "-C", takeDirectory d, takeFileName d]
-    rawSystemVerbose "chmod" [ "-R", "777","."]
+    rawSystemVerbose "chmod" [ "-R", "777", d]
     rawSystemVerbose "rm" [ "-fr", d ]
     return ()
 
