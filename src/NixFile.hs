@@ -110,8 +110,11 @@ updateSourceRegionAction (IRegionData ind opts contents map' _)
                              fstLine n'' = (BS.unpack ind) ++ attrName ++ "= sourceFromHead " ++ "\"" ++ (makeRelative distDir n'') ++ "\""
                              update = lift $ do
                                updateRepoTarGz thisRepo r n' distFileF distFileLocation
-                               rev <- revId r thisRepo
-                               return rev
+                               -- rev <- revId r thisRepo
+                               -- read rev from file. Eg CVS is using current timestamp only
+                               filename <- BS.readFile distFileLocation
+                               let de = dropExtension . dropExtension
+                               return $ de $ drop (1 {- the "-" -} + length n') $ takeFileName $ BS.unpack filename
 
                          (c, d) <- case workAction of
                             DWUpdate -> do
