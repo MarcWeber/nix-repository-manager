@@ -147,7 +147,7 @@ hacknixRegion =
                repoDir
                = do
           let (_, srcOld, _) = splitC contents
-              indent = map (ind `BS.append`)
+              indent = map (ind `BS.append` (BS.pack "  ") `BS.append`)
               distDir = repoDir </> "dist"
               groups = maybe [] words $ lookup "groups" map'
           do -- Either / Error monad 
@@ -180,7 +180,7 @@ hacknixRegion =
             in if contains' "throw \"" || contains' "fetchurl" then
                         (before, [src,maybeSrc], rest)
                     else
-                        (before, [src], maybeSrc:rest)
+                        (before, [src], rest)
           (_,[]) -> ([],[],[]) -- no src? was empty. 
           r@(_,_) -> error $ "unexpected split result" ++ show r -- should never happen unless you mess up contents yourself. If this happens empty the contents and start from scratch 
 {-
