@@ -200,6 +200,7 @@ instance Repo DarcsRepoData where
     -- I'm using darcs-git-import to browse history, so remove the _togit directory as well
     rawSystemVerbose "rm" [ "-fr", (d </> "_togit") ]
     rawSystemVerbose "sh" [ "-c", "[ -f *etup.*hs ] && rm -fr dist" ] -- clean.. else cabal will not be able to recognize that it should recompile the files -> trouble 
+    rawSystemVerbose "sh" [ "-c", "[ -f *etup.*hs ] && rm setup Setup" ] -- clean.. else cabal will not be able to recognize that it should recompile the files -> trouble 
     return ()
 
   -- system ["darcs", "get", "--partial"]
