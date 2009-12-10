@@ -29,12 +29,14 @@ type RepoConfig = [(String,String)] -- simply a list of tuples
 
 
 -- ========== repository types ======================================= 
-data RepoInfo = RepoInfo String -- name 
+data RepoInfo = RepoInfo
+                 String -- name 
                  [String] -- groups so that you can update all belonging to the same group at once
+                 (Maybe FilePath) -- subdirectory 
                  Repository
   deriving (Show,Read)
 repoName :: RepoInfo -> String
-repoName (RepoInfo n _ _) = n
+repoName (RepoInfo n _ _ _) = n
 
 data Repository = 
     DarcsRepo DarcsRepoData
@@ -77,15 +79,6 @@ class Repo r where
                 -> FilePath -- tmp dir
                 -> IO ()
 
-  createTarGz r dir destFile d = do
-    rawSystemVerbose "cp" [ "-r", dir, d ]
-    removeDevFiles d
-    clean r d
-    rawSystemVerbose "tar" [  "cfz", destFile, "-C", takeDirectory d, takeFileName d]
-    rawSystemVerbose "chmod" [ "-R", "777", d]
-    rawSystemVerbose "rm" [ "-fr", d ]
-    return ()
-
   -- remove vcs directories etc 
   clean :: r -> String -> IO ()
   clean _ _ = return ()  
@@ -113,17 +106,34 @@ class Repo r where
 -- ============= instances ==============================================
 
 instance Repo RepoInfo where
-  createTarGz (RepoInfo _ _ r ) b c d = createTarGz r b c d
-  repoGet (RepoInfo _ _ r) = repoGet r
-  isRepoClean (RepoInfo _ _ r) = isRepoClean r
-  repoUpdate (RepoInfo _ _ r) = repoUpdate r
-  revId (RepoInfo _ _ r) = revId r
+  repoGet (RepoInfo _ _ _ r) = repoGet r
+  isRepoClean (RepoInfo _ _ _ r) = isRepoClean r
+  repoUpdate (RepoInfo _ _ _ r) = repoUpdate r
+  revId (RepoInfo _ _ _ r) = revId r
   parseFromConfig map' = do
      name <- lookup "name" map'
      repo <- parseFromConfig map'
      return $ RepoInfo name (maybe [] words $ lookup "groups" map') -- groups 
+              (lookup "subdir" map')
              repo -- Repo 
            -- (maybe [Sha256] (map read . words) $ lookup "hash" map) [>Hash to use 
+
+  createTarGz r@(RepoInfo _ _ subdir _) dir destFile d = do
+    let addSubdir p Nothing = p
+        addSubdir p (Just s) = p </> s
+    rawSystemVerbose "cp" [ "-r", addSubdir dir subdir, d ]
+    removeDevFiles d
+    clean r d
+    -- Think about how to include license in all cases ?? 
+    writeFile "README-this-repo" $ unlines ([
+        "this distribution file was created by http://github.com/MarcWeber/nix-repository-manager",
+        "Its source is: " ++ show r
+        ] ++ (maybeToList (fmap ("containing only its subdirectory " ++) subdir))
+      )
+    rawSystemVerbose "tar"   [ "cfz", destFile, "-C", takeDirectory d, takeFileName d]
+    rawSystemVerbose "chmod" [ "-R", "777", d]
+    rawSystemVerbose "rm"    [ "-fr", d ]
+    return ()
   
 instance Repo Repository where
   createTarGz (DarcsRepo r ) b c d = createTarGz r b c d
@@ -215,6 +225,7 @@ instance Repo DarcsRepoData where
       ExitSuccess -> return False
       ExitFailure 1 -> return True
       ExitFailure ec' -> error $ "unkown darcs whatsnew exit code " ++ (show ec')
+  createTarGz = error "never called"
 
 -- SVN implementation
 instance Repo SVNRepoData where
@@ -236,6 +247,7 @@ instance Repo SVNRepoData where
     svn <- findExecutable' "svn"
     out <- runInteractiveProcess' svn ["diff"] Nothing Nothing $ \(_,o,_) -> hGetContents o
     return $ all isSpace out
+  createTarGz = error "never called"
 
 -- SVN implementation
 -- TODO
@@ -267,6 +279,8 @@ instance Repo CVSRepoData where
     print "isRepoClean to be implemented for cvs, returning True"
     return True
 
+  createTarGz = error "never called"
+
 -- git implementation 
 instance Repo GitRepoData where
   parseFromConfig map' = do 
@@ -290,6 +304,8 @@ instance Repo GitRepoData where
     out <- runInteractiveProcess' git ["diff"] Nothing Nothing $ \(_,o,_) -> hGetContents o
     return $ all isSpace out
 
+  createTarGz = error "never called"
+
 -- bzr implementation 
 instance Repo BZRRepoData where
   parseFromConfig map' = do 
@@ -306,6 +322,8 @@ instance Repo BZRRepoData where
   isRepoClean _ = do
     print "isRepoClean to be implemented for bzr, returning True"
     return True
+
+  createTarGz = error "never called"
 
 
 
@@ -330,6 +348,8 @@ instance Repo MercurialRepoData where
     hg <- findExecutable' "hg"
     out <- runInteractiveProcess' hg ["diff"] Nothing Nothing $ \(_,o,_) -> hGetContents o
     return $ all isSpace out
+
+  createTarGz = error "never called"
 
 
 checkCleanness :: (Repo r) => FilePath -> r -> [Char] -> IO ()
@@ -369,7 +389,7 @@ updateRepoTarGz thisRepo r n distFileF distFileLocation = do
 
 
 publishRepo :: RepoInfo -> FilePath -> IO String
-publishRepo (RepoInfo _ _ _) distFileLocation = do
+publishRepo (RepoInfo _ _ _ _) distFileLocation = do
    distFile <- readFile distFileLocation
    let distFileName = takeFileName distFile
    -- upload server 
