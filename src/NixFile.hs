@@ -150,13 +150,17 @@ hacknixRegion =
                repoDir
                = do
           let (_, srcOld, _) = splitC contents
-              indent = map (ind `BS.append` (BS.pack "  ") `BS.append`)
+              indent = map (ind `BS.append`)
               distDir = repoDir </> "dist"
               groups = maybe [] words $ lookup "groups" map'
           do -- Either / Error monad 
           (_, n') <- repoAndNameFromMap opts path map'
           whenSelected args ([n'] ++ groups) contents $ do
-            srcContents <- updateSourceRegionAction (i { rContents = srcOld, rMap = map' ++ [("srcAttrName", "srcFile")]}) path workAction args repoDir
+            srcContents <- updateSourceRegionAction (i {
+                            rInd = ind `BS.append` (BS.pack "  "),
+                            rContents = srcOld,
+                            rMap = map' ++ [("srcAttrName", "srcFile")]
+                            }) path workAction args repoDir
             distSrcFile <- lift $ liftM (BS.unpack) $ BS.readFile $ distDir </> n'
             let nameR = ( dropExtension . dropExtension . takeFileName) distSrcFile
             let hnDist = distDir </> nameR `addExtension` ".nix"
