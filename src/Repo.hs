@@ -1,7 +1,11 @@
 {-# LANGUAGE CPP,ScopedTypeVariables #-}
 module Repo where
+
+#ifdef USE_INTERLUDE
 #include "interlude.h"
 import Interlude
+#endif
+
 import Util
 import Control.Exception as E
 import System.Process

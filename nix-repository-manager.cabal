@@ -9,13 +9,19 @@ LICENSE: GPL
 Flag tests
   Default: False
 
+Flag use_interlude
+  Default: False
+
 
 executable     nix-repository-manager
   main-is:      Main.hs
-  build-depends: interlude, mtl, directory, base >= 4, old-time, filepath, process, old-locale, Glob, bytestring, parsec >= 3
+  build-depends: mtl, directory, base >= 4, old-time, filepath, process, old-locale, Glob, bytestring, parsec >= 3
   hs-source-dirs: src
   other-modules: Utils
   ghc-options: -Wall
+  if flag(use_interlude)
+    build-depends: interlude
+    cpp-options: -DUSE_INTERLUDE
 
 executable     tests
   main-is:      Test.hs
