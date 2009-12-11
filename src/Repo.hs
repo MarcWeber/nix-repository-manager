@@ -83,7 +83,6 @@ class Repo r where
 
   -- remove vcs directories etc 
   clean :: r -> String -> IO ()
-  clean _ _ = return ()  
 
   repoGet ::  r -> String -> IO ExitCode
   repoGet = repoUpdate
@@ -136,6 +135,7 @@ instance Repo RepoInfo where
     rawSystemVerbose "chmod" [ "-R", "777", d]
     rawSystemVerbose "rm"    [ "-fr", d ]
     return ()
+  clean (RepoInfo _ _ _ r) = clean r
   
 instance Repo Repository where
   createTarGz (DarcsRepo r ) b c d = createTarGz r b c d
@@ -182,6 +182,14 @@ instance Repo Repository where
   revId (GitRepo r) = revId r
   revId (BZRRepo r) = revId r
   revId (MercurialRepo r) = revId r
+
+  clean (DarcsRepo r) = clean r
+  clean (SVNRepo r) = clean r
+  clean (CVSRepo r) = clean r
+  clean (GitRepo r) = clean r
+  clean (BZRRepo r) = clean r
+  clean (MercurialRepo r) = clean r
+
 
 
 -- darcs implementation 
