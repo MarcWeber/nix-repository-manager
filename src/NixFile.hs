@@ -107,7 +107,7 @@ updateSourceRegionAction (IRegionData ind opts contents map' _)
                                distFile <- publishRepo r distFileLocation
                                hash <- createHash distFile Sha256 (distFile ++ ".sha256")
                                return (l1, (BS.unpack ind) ++ extraInd ++ "(fetchurl { url = \"http://mawercer.de/~nix/repos/" ++ (takeFileName distFile) ++ "\"; sha256 = \"" ++ hash ++ "\"; });")
-                             fstLine n'' = (BS.unpack ind) ++ attrName ++ "= sourceFromHead " ++ "\"" ++ (makeRelative distDir n'') ++ "\""
+                             fstLine n'' = (BS.unpack ind) ++ attrName ++ " = sourceFromHead " ++ "\"" ++ (makeRelative distDir n'') ++ "\""
                              update = lift $ do
                                updateRepoTarGz thisRepo r n' distFileF distFileLocation
                                -- rev <- revId r thisRepo
