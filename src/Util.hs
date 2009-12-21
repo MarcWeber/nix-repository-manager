@@ -44,6 +44,7 @@ runInteractiveProcess' :: FilePath
                         -> ((Handle, Handle, Handle) -> IO b)
                         -> IO b
 runInteractiveProcess' cmd args mb_cwd mb_env f = do
+  putStrLn $ "running: " ++ (show (cmd:args)) ++ " in " ++ (show mb_cwd)
   (i,o,e,p) <- runInteractiveProcess cmd args mb_cwd mb_env
   r <- f (i,o,e)
   ec <- waitForProcess p
