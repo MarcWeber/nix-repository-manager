@@ -140,9 +140,9 @@ snippet options = mapM_ showSnippet allRegions
   
 
 printSnippet :: [Char] -> IO ()
-printSnippet "git" = snippet "{ name=\"?\"; type=\"git\"; url=\"git://..\"; [ groups = \"group1 group2\"; ]; }"
-printSnippet "hg"  = snippet "{ name=\"?\"; type=\"hg\";  url=\"git://..\"; [ groups = \"group1 group2\"; ]; }"
-printSnippet "svn" = snippet "{ name=\"?\"; type=\"svn\"; url=\"git://..\"; [ groups = \"group1 group2\"; ]; }"
+printSnippet "git" = snippet "{ name=\"?\"; type=\"git\"; url=\"\"; [ groups = \"group1 group2\"; ]; }"
+printSnippet "hg"  = snippet "{ name=\"?\"; type=\"hg\";  url=\"\"; [ groups = \"group1 group2\"; ]; }"
+printSnippet "svn" = snippet "{ name=\"?\"; type=\"svn\"; url=\"\"; [ groups = \"group1 group2\"; ]; }"
 printSnippet "cvs" = snippet "{ name=\"?\"; type=\"cvs\"; cvsRoot=\"...\"; module=\"module\" [ groups = \"group1 group2\"; ]; }"
 printSnippet _ = error "in print snippet" -- should never occur 
 
