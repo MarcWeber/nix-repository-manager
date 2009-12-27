@@ -64,7 +64,7 @@ printUsage = do
   putStrLn $ unlines
     [ "usage: "
     , ""
-    , "  " ++ name ++ "  --snippets [git|hg|svn|cvs|bzr "
+    , "  " ++ name ++ "  --snippet [git|hg|svn|cvs|bzr "
     , "        creates a snippet you can copy paste into the nix source code"
     , ""
     , "  " ++ name ++ " dir --update  [list]           "
