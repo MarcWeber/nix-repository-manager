@@ -307,10 +307,11 @@ instance Repo GitRepoData where
     ec <- rawSystemVerbose "git" ["clone", url, dest]
     case ec of
       ExitFailure _ -> return ec
-      _ -> do
-        -- if branch is given switch to it and setup remote tracking 
-        let sb branch = rawSystemVerbose "git" ["checkout", "-tb", branch, "origin/" ++ branch ]
-        maybe (return ExitSuccess) sb mbBranch
+      -- if branch is given switch to it and setup remote tracking 
+      _ -> case mbBranch of
+          Just branch -> withCurrentDirectory dest $
+                            rawSystemVerbose "git" ["checkout", "-tb", branch, "origin/" ++ branch ]
+          _ -> return ExitSuccess
 
   repoUpdate (GitRepoData _ _) dest =
     withCurrentDirectory dest $ rawSystemVerbose "git" [ "pull"]
