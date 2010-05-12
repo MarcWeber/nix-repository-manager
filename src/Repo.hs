@@ -65,7 +65,7 @@ data CVSRepoData = CVSRepoData String -- cvs root (eg :pserver:anonymous@synergy
                                String -- module
   deriving (Show,Read)
 
-data GitRepoData = GitRepoData String -- URL 
+data GitRepoData = GitRepoData String (Maybe String) -- URL, branch
   deriving (Show,Read)
 
 data BZRRepoData = BZRRepoData String -- URL 
@@ -300,11 +300,19 @@ instance Repo CVSRepoData where
 instance Repo GitRepoData where
   parseFromConfig map' = do 
     url <- lookup "url" map'
-    return $ GitRepoData url
-  repoGet (GitRepoData url) dest = do
+    let mbBranch = lookup "branch" map'
+    return $ GitRepoData url mbBranch
+  repoGet (GitRepoData url mbBranch) dest = do
     removeDirectory dest -- I guess git wants to create the directory itself 
-    rawSystemVerbose "git" ["clone", url, dest]
-  repoUpdate (GitRepoData _) dest =
+    ec <- rawSystemVerbose "git" ["clone", url, dest]
+    case ec of
+      ExitFailure _ -> return ec
+      _ -> do
+        -- if branch is given switch to it and setup remote tracking 
+        let sb branch = rawSystemVerbose "git" ["checkout", "-tb", branch, "origin/" ++ branch ]
+        maybe (return ExitSuccess) sb mbBranch
+
+  repoUpdate (GitRepoData _ _) dest =
     withCurrentDirectory dest $ rawSystemVerbose "git" [ "pull"]
   clean _ d = do
     rawSystemVerbose "rm" [ "-fr", d </> ".git" ]
