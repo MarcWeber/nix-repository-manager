@@ -11,9 +11,9 @@ import Control.Exception as E
 import System.Process
 import System.Environment
 import System.IO
-import System.Locale
-import GHC.IOBase
 import System.Exit
+import System.Locale
+import GHC.IO
 import Data.List
 import Data.Maybe
 import Control.Monad
@@ -126,19 +126,22 @@ instance Repo RepoInfo where
   createTarGz r@(RepoInfo _ _ subdir _) dir destFile d = do
     let addSubdir p Nothing = p
         addSubdir p (Just s) = p </> s
-    rawSystemVerbose "cp" [ "-r", addSubdir dir subdir, d ]
-    removeDevFiles d
-    clean r d
-    -- Think about how to include license in all cases ?? 
-    writeFile "README-this-repo" $ unlines ([
-        "this distribution file was created by http://github.com/MarcWeber/nix-repository-manager",
-        "Its source is: " ++ show r
-        ] ++ (maybeToList (fmap ("containing only its subdirectory " ++) subdir))
-      )
-    rawSystemVerbose "tar"   [ "cfz", destFile, "-C", takeDirectory d, takeFileName d]
-    rawSystemVerbose "chmod" [ "-R", "777", d]
-    rawSystemVerbose "rm"    [ "-fr", d ]
-    return ()
+    ec <- rawSystemVerbose "cp" [ "-r", addSubdir dir subdir, d ]
+    case ec of
+      ExitFailure _ -> error $ show ec
+      _ -> do
+        removeDevFiles d
+        clean r d
+        -- Think about how to include license in all cases ?? 
+        writeFile "README-this-repo" $ unlines ([
+            "this distribution file was created by http://github.com/MarcWeber/nix-repository-manager",
+            "Its source is: " ++ show r
+            ] ++ (maybeToList (fmap ("containing only its subdirectory " ++) subdir))
+          )
+        rawSystemVerbose "tar"   [ "cfz", destFile, "-C", takeDirectory d, takeFileName d]
+        rawSystemVerbose "chmod" [ "-R", "777", d]
+        rawSystemVerbose "rm"    [ "-fr", d ]
+        return ()
   clean (RepoInfo _ _ _ r) = clean r
   
 instance Repo Repository where
