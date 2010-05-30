@@ -176,6 +176,7 @@ hacknixRegion =
                     file <- maybe (fail "hack-nix --to-nix didn't write a dist/*.nix file")
                                   return $ listToMaybe nixFiles'
                     copyFile file hnDist
+                    copyFile file hnDist
               lift $ liftM (splitC . BS.lines) $ BS.readFile hnDist
             return $ (indent a) ++ srcContents ++ (indent c)
 
@@ -188,7 +189,21 @@ hacknixRegion =
                         (before, [src,maybeSrc], rest)
                     else
                         (before, [src], rest)
-          (_,[]) -> ([],[],[]) -- no src? was empty. 
+          (_,[]) ->
+                -- try again, initial code. split at lines
+                --   sha256="xx"
+                --   url = "file:/..."
+                -- line and replace that by src
+                case break (((BS.pack "sha256") `BS.isPrefixOf`) . dropSpaces) list of
+                  (before, src:urlEq:maybeSrc:rest) ->
+                        -- the pretty printer sometimes puts the url below the "url ="
+                        -- In this case 3 lines must be removed
+                        let rest' = if BS.pack "url = " `BS.isSuffixOf` urlEq
+                                      then rest
+                                      else maybeSrc:rest
+                        in (before, [] {- will be replaced anyway -}, rest')
+                  _ -> error $ "unexpected break result"
+                   -- ([],[],[]) -- no src? was empty. 
           r@(_,_) -> error $ "unexpected split result" ++ show r -- should never happen unless you mess up contents yourself. If this happens empty the contents and start from scratch 
 {-
  Str: everything this tool doesn't know about
@@ -312,7 +327,7 @@ writeNixFile (NixFile path items) = withFile path WriteMode $ \h -> do
   let writeItem (IStr l) = BS.hPutStr h $ BS.unlines l
       writeItem (IRegion (IRegionData ind options contents _ reg')) = do
           BS.hPutStr h $ BS.unlines $
-            [ ind `BS.append` (regStart reg') `BS.append` (BS.pack ": ") `BS.append` options
+            [ ind `BS.append` (regStart reg') `BS.append` (BS.pack ":") `BS.append` options
             ] ++ contents
             ++ [ ind `BS.append` (regEnd reg') ]
   mapM_ writeItem items
