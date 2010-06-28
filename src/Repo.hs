@@ -421,6 +421,6 @@ publishRepo (RepoInfo _ _ _ _) distFileLocation = do
    let distFileName = takeFileName distFile
    -- upload server 
    rsync <- findExecutable' "rsync"
-   runProcess' rsync [ "-cs", distFile, "nix@mawercer.de:www/repos/" ++ distFileName ]
+   runProcess' rsync [ "-cs", distFile, "nix@mawercer.de:public_html/repos/" ++ distFileName ]
    return distFile
 
