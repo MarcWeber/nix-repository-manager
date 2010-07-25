@@ -286,8 +286,13 @@ instance Repo CVSRepoData where
         -- print "getting cvs sources complete finished"
         -- return a
       -- rawSystemVerbose "sh" $ ["-c", "a=*; echo \"a is\" $a; mv $a/* .; rmdir $a"];
-  repoUpdate (CVSRepoData _ _) dest =
-    withCurrentDirectory dest $ rawSystemVerbose "cvs" $ ["update"]
+  repoUpdate (CVSRepoData _ module') dest =
+    withCurrentDirectory dest $ rawSystemVerbose "cvs" $ ["update","-dA", moduleTail ]
+    where moduleTail = case (dropWhile (not . (`elem` "/\\")) module') of
+                      "" -> "."
+                      ('/':xs) -> xs
+                      _ -> error "unexpected char XYZ"
+
 
   clean _ d = do
     rawSystemVerbose "/bin/sh" [ "-c", "find " ++ (show d) ++ " -type d -name \"CVS\" | xargs rm -fr " ]
