@@ -65,13 +65,15 @@ data CVSRepoData = CVSRepoData String -- cvs root (eg :pserver:anonymous@synergy
                                String -- module
   deriving (Show,Read)
 
-data GitRepoData = GitRepoData String (Maybe String) -- URL, branch
+data GitRepoData = GitRepoData String -- URL, branch
+                               (Maybe String) -- maybe branch name
   deriving (Show,Read)
 
-data BZRRepoData = BZRRepoData String -- URL 
+data BZRRepoData = BZRRepoData String -- URL
   deriving (Show,Read)
 
-data MercurialRepoData = MercurialRepoData String -- URL 
+data MercurialRepoData = MercurialRepoData String -- URL
+                                           (Maybe String) -- maybe branch name
 
   deriving (Show,Read)
 
@@ -363,11 +365,17 @@ instance Repo BZRRepoData where
 instance Repo MercurialRepoData where
   parseFromConfig map' = do 
     url <- lookup "url" map'
-    return $ MercurialRepoData url
-  repoGet (MercurialRepoData url) dest = do
+    let mbBranch = lookup "branch" map'
+    return $ MercurialRepoData url mbBranch
+  repoGet (MercurialRepoData url mbBranch) dest = do
     removeDirectory dest -- I guess git wants to create the directory itself 
-    rawSystemVerbose "hg" ["clone", url, dest]
-  repoUpdate (MercurialRepoData  _) dest =
+    ec <- rawSystemVerbose "hg" ["clone", url, dest]
+    case mbBranch of
+        Just branch -> withCurrentDirectory dest $
+                          rawSystemVerbose "hg" ["checkout", branch]
+        Nothing -> return ec
+
+  repoUpdate (MercurialRepoData _ _) dest =
     withCurrentDirectory dest $ rawSystemVerbose "hg" [ "pull"]
   clean _ d = do
     rawSystemVerbose "rm" [ "-fr", d </> ".hg" ]

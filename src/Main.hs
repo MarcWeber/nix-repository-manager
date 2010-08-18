@@ -139,11 +139,13 @@ snippet options = mapM_ showSnippet allRegions
                           , BS.unpack (regEnd reg') ]
   
 
+g = "[ groups = \"group1 group2\"; ]"
+
 printSnippet :: [Char] -> IO ()
-printSnippet "git" = snippet "{ name=\"?\"; type=\"git\"; url=\"\"; [ groups = \"group1 group2\"; ]; }"
-printSnippet "hg"  = snippet "{ name=\"?\"; type=\"hg\";  url=\"\"; [ groups = \"group1 group2\"; ]; }"
-printSnippet "svn" = snippet "{ name=\"?\"; type=\"svn\"; url=\"\"; [ groups = \"group1 group2\"; ]; }"
-printSnippet "cvs" = snippet "{ name=\"?\"; type=\"cvs\"; cvsRoot=\"...\"; module=\"module\" [ groups = \"group1 group2\"; ]; }"
+printSnippet "git" = snippet $ "{ name=\"?\"; type=\"git\"; url=\"\"; [branch = \"branchname\";] "++g++" }"
+printSnippet "hg"  = snippet $ "{ name=\"?\"; type=\"hg\";  url=\"\"; [branch = \"branchname\";] "++g++" }"
+printSnippet "svn" = snippet $ "{ name=\"?\"; type=\"svn\"; url=\"\"; "++g++"; }"
+printSnippet "cvs" = snippet $ "{ name=\"?\"; type=\"cvs\"; cvsRoot=\"...\"; module=\"module\" "++g++" }"
 printSnippet _ = error "in print snippet" -- should never occur 
 
 main :: IO ()
