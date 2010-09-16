@@ -64,7 +64,7 @@ printUsage = do
   putStrLn $ unlines
     [ "usage: "
     , ""
-    , "  " ++ name ++ "  --snippet [git|hg|svn|cvs|bzr "
+    , "  " ++ name ++ "  --snippet [git|hg|svn|cvs|bzr|darcs] "
     , "        creates a snippet you can copy paste into the nix source code"
     , ""
     , "  " ++ name ++ " dir --update  [list]           "
@@ -146,6 +146,8 @@ printSnippet "git" = snippet $ "{ name=\"?\"; type=\"git\"; url=\"\"; [branch = 
 printSnippet "hg"  = snippet $ "{ name=\"?\"; type=\"hg\";  url=\"\"; [branch = \"branchname\";] "++g++" }"
 printSnippet "svn" = snippet $ "{ name=\"?\"; type=\"svn\"; url=\"\"; "++g++"; }"
 printSnippet "cvs" = snippet $ "{ name=\"?\"; type=\"cvs\"; cvsRoot=\"...\"; module=\"module\" "++g++" }"
+printSnippet "bzr" = snippet $ "{ name=\"?\"; type=\"bzr\"; url=\"...\"; "++g++" }"
+printSnippet "darcs" = snippet $ "{ name=\"?\"; type=\"darcs\"; url=\"...\"; "++g++" }"
 printSnippet _ = error "in print snippet" -- should never occur 
 
 main :: IO ()
