@@ -183,7 +183,7 @@ instance Repo Repository where
 -- darcs implementation 
 instance Repo DarcsRepoData where
   sourceFiles _ p = do
-    files <- runInteractiveProcess' "darcs" ["show","files"] Nothing Nothing $ \(_,o,_) -> hGetContents o
+    files <- runInteractiveProcess' "darcs" ["show","files"] (Just p) Nothing $ \(_,o,_) -> hGetContents o
     return $ map (drop 2) $ filter (/= ".") $ lines files
     
   nameSuffix _ _ = "-darcs" -- rev is not helpful
@@ -278,7 +278,7 @@ instance Repo CVSRepoData where
                       _ -> error "unexpected char XYZ"
 
 
-  isRepoClean _ d = do
+  isRepoClean _ _ = do
     print "isRepoClean to be implemented for cvs, returning True"
     return True
 
@@ -309,7 +309,7 @@ instance Repo GitRepoData where
   revId _ fp = do
     git <- findExecutable' "git"
     out <- runInteractiveProcess' git ["rev-parse", "--verify","HEAD"] (Just fp) Nothing $ \(_,o,_) -> hGetContents o
-    return $ head . lines $ out
+    return $ take 7 $ head . lines $ out
   isRepoClean _ fp = do
     git <- findExecutable' "git"
     out <- runInteractiveProcess' git ["diff"] (Just fp) Nothing $ \(_,o,_) -> hGetContents o
@@ -318,7 +318,7 @@ instance Repo GitRepoData where
 
 -- bzr implementation 
 instance Repo BZRRepoData where
-  sourceFiles _ p = do
+  sourceFiles _ _ = do
     error "bzr sourceFiles TODO"
     -- files <- runInteractiveProcess' "git" ["ls-files"] Nothing Nothing $ \(_,o,_) -> hGetContents o
     -- return $ filter (/= ".") $ lines files
@@ -333,7 +333,7 @@ instance Repo BZRRepoData where
     rawSystemVerbose "bzr" ["branch", url, dest] Nothing
   repoUpdate (BZRRepoData _) dest =
     rawSystemVerbose "bzr" [ "update"] (Just dest) -- TODO: fix url when it has changed 
-  isRepoClean _ d = do
+  isRepoClean _ _ = do
     print "isRepoClean to be implemented for bzr, returning True"
     return True
 

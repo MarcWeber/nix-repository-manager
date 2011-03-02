@@ -186,7 +186,7 @@ createTask cfg tmpDir mv_nixfiles action reg = do
                     modifyMVar_ mv_nixfiles $ flushFiles . replaceRegionInFiles (reg {rContents = map BS.pack newRegionContents})
 
                   when alsoPublish $ addTask (Task TTPublish ("publishing " ++ name) (const publish))
-                  return $ "updated: " ++ name
+                  return $ "updated: " ++ name ++ " " ++ oldRev ++ " -> " ++ rev
 
       Task TTFetch
            ("updating " ++ name)

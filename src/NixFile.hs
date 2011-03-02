@@ -128,7 +128,8 @@ parseFileStrict file = do
                                           more <- choice [try (notL True), return []]
                                           return $ line:more)
                                 , if emptyOk' then return [] else fail "more lines expected" ]
-          in  notL emptyOk
+          in if emptyOk then choice [ notL emptyOk, return [] ]
+                else notL emptyOk
 
         iRegion = try $ do
           firstline <- lookAhead l
