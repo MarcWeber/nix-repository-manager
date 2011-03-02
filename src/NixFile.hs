@@ -36,9 +36,9 @@ data IRegionData = IRegionData {
               }
   deriving (Show)
 
--- two regions are the same if the start start line is the same
+-- two regions are the same if type and options are the same
 sameRegion :: IRegionData -> IRegionData -> Bool
-sameRegion r1 r2 = ((==) `on` sStart) r1 r2
+sameRegion r1 r2 = ((==) `on` sStart) r1 r2 && (((==) `on` rOpts) r1 r2)
 
 nixFileRegions :: NixFile -> [IRegionData]
 nixFileRegions (NixFile _ _ list) = [i | IRegion i <- list ]
@@ -179,14 +179,18 @@ parseFileStrict file = do
 
 -- write NixFile 
 writeNixFile :: NixFile -> IO NixFile
-writeNixFile (NixFile path _ items) = withFile path WriteMode $ \h -> do
+writeNixFile f@(NixFile _ False _) = return f
+writeNixFile (NixFile path True items) = withFile path WriteMode $ \h -> do
   let writeItem (IStr l) = BS.hPutStr h $ BS.unlines l
-      writeItem (IRegion (IRegionData start end ind options contents _ _)) = do
+      writeItem (IRegion (IRegionData start _ ind options contents _ _)) = do
           BS.hPutStr h $ BS.unlines $
             [ (BS.pack ind) `BS.append` start `BS.append` (BS.pack ":") `BS.append` options
             ] ++ contents
             ++ [ (BS.pack ind) `BS.append` (BS.pack "# END") ]
-  mapM_ writeItem items
+      dropN (IStr l) = IStr $ init l
+      dropN _ = error "unexpected"      
+      dropLastN ls = init ls ++ [dropN (last ls)]
+  mapM_ writeItem $ dropLastN items
   -- reset dirty flag:
   return $ NixFile path False items
 

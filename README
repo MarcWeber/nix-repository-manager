@@ -47,6 +47,20 @@ FILE will be replaced by the snapshot file
 You have to override fetchurl and substitute the first part of the url in order
 to use the local files.
 
+  # Example:
+  packageOverrides = p: {
+
+    fetchurl = args: 
+      let 
+        prefix = "http://mawercer.de/~nix/";
+        len = builtins.stringLength prefix;
+        newArgs = 
+            if args ? url && builtins.substring 0 len args.url == prefix
+            then (removeAttrs args ["url"]) // { urls = [ "file:///home/marc/managed_repos/dist/${builtins.substring len 9999 args.url}" args.url ]; }
+            else args;
+      in p.fetchurl newArgs;
+  };
+
 TROUBLE?
 ==========
 Some operations such as svn or darcs require some minimal setup such as
