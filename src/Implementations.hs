@@ -6,6 +6,7 @@ import Codec.Archive.Tar.Entry
 import Data.Maybe
 import qualified Data.Map as M
 import Data.List
+import Data.Char
 import System.Directory
 import System.Posix.Files
 import System.Environment
@@ -84,6 +85,7 @@ hackNixImpl tmpDir rev cfg reg = addErrorContext "hackNixImpl" $ do
     let snapshotFileCache = distDir </> name
 
     let tmp = tmpDir </> name
+    let thisRepo = (cfgRepoDir cfg) </> name
 
     createDirectoryIfMissing True tmp
 
@@ -94,13 +96,28 @@ hackNixImpl tmpDir rev cfg reg = addErrorContext "hackNixImpl" $ do
     -- run hack-nix to create cabal description 
     contents <- do
         _ <- rawSystemVerbose "tar" ["xfj", distDir </> snapshotName, "--strip-components=1"] (Just tmp)
-        _ <- rawSystemVerbose "hack-nix" ["--to-nix"] (Just tmp)
-        nixFiles' <- liftM (head . fst) $ globDir [compile (tmp </> "dist/*.nix")] "." 
+        _ <- rawSystemVerbose "ghc" ["--make", "Setup.hs"] (Just tmp)
+
+        setups <- liftM (head.fst) $ globDir [compile ("Setup*.hs")] thisRepo
+        _ <- rawSystemVerbose "ghc" ["--make", head setups] (Just tmp)
+        mhn <- findExecutable "hack-nix"
+        _ <- case mhn of
+          Just hn -> rawSystemVerbose hn ["--to-nix"] (Just tmp)
+          _ -> error "no hack-nix in PATH" -- should it be bulid ? takes longer than for gem
+        nixFiles' <- liftM (head . fst) $ globDir [compile ("dist/*.nix")] tmp
         file <- maybe (fail "hack-nix --to-nix didn't write a dist/*.nix file")
-                      return $ liftM (makeRelative tmp) $ listToMaybe nixFiles'
+                      return $ listToMaybe nixFiles'
         readFile file
+
+    _ <- rawSystemVerbose "rm" ["-fr", tmp] Nothing
+  
+    let contentsWithoutSource = takeWhile (not . ("sha256 =" `isPrefixOf`) . dropWhile isSpace) . lines $ contents
+    src <- source cfg (distDir </> snapshotName) snapshotName
         
-    return [contents]
+    return $ contentsWithoutSource ++ [
+              "  srcFile = " ++ src ++ ";"
+            , "}"
+            ]
 
 -- gem implementation {{{1
 -- runs also special gem command getting dependency information out of the snapshot .gem file
