@@ -27,7 +27,9 @@ executable     nix-repository-manager
        bytestring,
        containers,
        unix,
-       parsec >= 3
+       parsec >= 3,
+       tar,
+       bzlib
   hs-source-dirs: src
   other-modules: Util
   ghc-options: -Wall -threaded
@@ -37,7 +39,10 @@ executable     nix-repository-manager
 
 executable     tests
   main-is:      Test.hs
-  build-depends: mtl, directory, base >= 4, old-time, filepath, process, old-locale, Glob, bytestring, HUnit, parsec >= 3
+  build-depends: mtl, directory, base >= 4, old-time, filepath, process, old-locale, Glob, bytestring, HUnit, parsec >= 3,
+       tar,
+       bzlib
+
   hs-source-dirs: src
   if !flag(tests)
     buildable: False

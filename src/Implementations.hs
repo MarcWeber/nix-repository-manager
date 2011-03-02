@@ -1,6 +1,8 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 module Implementations where
-import System.Exit
+import qualified Codec.Archive.Tar as Tar
+import qualified Data.ByteString.Lazy as BS
+import Codec.Archive.Tar.Entry
 import Data.Maybe
 import qualified Data.Map as M
 import Data.List
@@ -11,11 +13,11 @@ import System.IO
 import System.FilePath.Glob
 import System.FilePath
 import Control.Monad
-import System.Process
 import Types
 import Repo
 import Util
 import NixFile
+import Codec.Compression.BZip (compress)
 
 
 autoUpdateImpl, hackNixImpl, gemImpl ::
@@ -39,11 +41,13 @@ createTarBz2 cfg reg rev = addErrorContext "createTarBz2" $ do
   let (repoDir :: String) = (cfgRepoDir cfg) </> name
   sf <- sourceFiles r repoDir
 
-  (_,_,_,h) <- runInteractiveProcess "tar" (["cjf", destFile, "-C", repoDir, "--" ] ++ sf) Nothing Nothing
-  e <- waitForProcess h
-  case e of
-    ExitSuccess -> return ()
-    ExitFailure _ -> error "tar failed"
+  entries <- mapM (\p -> do
+    let x = "nix_repository_manager" </> p
+    let s = repoDir </> p
+    isd <- doesDirectoryExist s
+    packFileEntry s (either error id (toTarPath isd x))
+    ) sf
+  BS.writeFile destFile $ compress $ Tar.write entries
   return snapshotName
 
 -- auto update implementation {{{1
