@@ -144,7 +144,7 @@ createTask cfg tmpDir mv_nixfiles action reg = do
           publish = do
                   let prog = head $ cfgUpload cfg
                       args file = map (\a -> if a == "FILE" then file else a) $ tail $ cfgUpload cfg
-                  file <- readFile distFileLocation
+                  file <- liftM (distDir </>) $ readFile distFileLocation
                   runProcess' prog (args file) Nothing
                   return $ "uploaded :" ++ name
 

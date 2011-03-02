@@ -105,6 +105,7 @@ gemImpl _ rev cfg reg = do
   let name = regionName reg
   let thisRepo = (cfgRepoDir cfg) </> name -- copied some lines below 
   let distDir = repoDir </> "dist"
+  let snapshotFileCache = distDir </> name
 
   let r = fromJust $ repoFromMap (rOpts reg)
   let suffix = nameSuffix r rev
@@ -136,6 +137,7 @@ gemImpl _ rev cfg reg = do
                  let gemFile = thisRepo </> drop (length p) line
                  let gemVersion =  (takeWhile (/= '-')) . drop (length ".gem") $ reverse gemFile
                  let snapshotName = (name ++ "-" ++ gemVersion) ++ suffix ++ ".gem"
+                 writeFile snapshotFileCache snapshotName
                  let target = distDir </> snapshotName
                  print $ "renaming created .gem " ++ gemFile ++ " to " ++ target
                  rename gemFile target
