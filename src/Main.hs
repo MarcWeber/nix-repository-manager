@@ -6,16 +6,25 @@
 
 module Main where
 import Control.Monad.Error
+import Data.Function
+import Control.Concurrent
+import Util
+import Repo
+import System.Directory
+import Data.Maybe
+import Control.Exception as E
+import ProcessPool
+import Implementations
+import Types
 import System.IO
 import System.Environment
-import Common
 import NixFile
-import Control.Monad
-import GHC.IOBase
-import System.Exit
+import GHC.IO
 import System.Cmd
 import Data.List
 import System.FilePath
+import System.Exit
+import qualified Data.Map as M
 
 #ifdef OLDTIME
 import System.Time
@@ -26,7 +35,6 @@ import Data.Time.LocalTime
 #endif
 
 
-import NixFile
 
 import qualified Data.ByteString.Char8 as BS
 
@@ -113,31 +121,134 @@ attr name distFileName sha256 =
 warning :: String -> IO ()
 warning = hPutStrLn stderr
 
+-- map regions to tasks and run them in parallel
+createTask :: Config -> FilePath -> MVar [NixFile] -> DoWorkAction -> IRegionData -> Task TaskType String String
+createTask cfg tmpDir mv_nixfiles action reg = do
+      let regions' = [ ("# REGION AUTO UPDATE", autoUpdateImpl)
+                    , ("# REGION HACK_NIX"   , hackNixImpl)
+                    , ("# REGION GEM"        , gemImpl)
+                    ]
+
+      let name = regionName reg
+      let repoDir = cfgRepoDir cfg
+      let thisRepo = repoDir </> name -- copied some lines below 
+      let distDir = repoDir </> "dist"
+      let revFile = repoDir </> "dist" </> (name ++ ".rev")
+      let distFileLocation = distDir </> name
+
+          impl = fromMaybe (error $ "unkown region :" ++ (BS.unpack (sStart reg)) ++ ", known regions: " ++ show (map fst regions')) $ lookup 
+                            (BS.unpack (sStart reg))
+                            regions'
+
+          -- publish
+          publish = do
+                  let prog = head $ cfgUpload cfg
+                      args file = map (\a -> if a == "FILE" then file else a) $ tail $ cfgUpload cfg
+                  file <- readFile distFileLocation
+                  runProcess' prog (args file) Nothing
+                  return $ "uploaded :" ++ name
+
+          -- update then maybe publish
+          update addTask alsoPublish  = do
+                  let r = fromMaybe (error "invalid repo specification") $ repoFromMap (rOpts reg)
+
+                  de <- doesDirectoryExist thisRepo
+                  when (de) $ checkCleanness thisRepo r name
+
+                  let set s = (getEnv s >> return True) `E.catch` (\(_ :: SomeException) -> return False)
+
+                  fetch <- liftM not $ set "NO_FETCH"
+                  forceRegionUpdate <- set "FORCE_REGION_UPDATE"
+                  oldRev <- doesFileExist revFile >>= (\b -> if b then liftM (BS.unpack) (BS.readFile revFile) else return "") 
+                  when fetch $ do
+                        if de then do
+                            putStrLn $ "updating " ++ name
+                            code <- repoUpdate r thisRepo
+                            case code of
+                              ExitSuccess -> return ()
+                              ExitFailure _ -> error $ "VCS: updating " ++ name ++ " failed"
+                          else do
+                            putStrLn $ "fetching " ++ name ++ " first time"
+                            createDirectoryIfMissing  True thisRepo
+                            code <- repoGet r thisRepo
+                            case code of
+                              ExitSuccess -> return ()
+                              ExitFailure _ -> error $ "VCS: updating " ++ name ++ " failed"
+                  rev <- revId r thisRepo
+                  writeFile revFile rev
+                  putStrLn $ "old rev: " ++ oldRev ++ " new rev: " ++ rev
+
+                  -- update region contents and flush
+                  when (rev /= oldRev || forceRegionUpdate) $ do
+                    newRegionContents <- liftM (map ((rInd reg) ++)) $ impl tmpDir rev cfg reg
+                    putStr "new region contents:"
+                    print newRegionContents
+                    modifyMVar_ mv_nixfiles $ flushFiles . replaceRegionInFiles (reg {rContents = map BS.pack newRegionContents})
+
+                  when alsoPublish $ addTask (Task TTPublish ("publishing " ++ name) (const publish))
+                  return $ "updated: " ++ name
+
+      Task TTFetch
+           ("updating " ++ name)
+           (\at -> case action of
+                      DWUpdate -> update at False
+                      DWUpdateThenPublish -> update at True
+                      DWPublish -> publish
+           )
+
 -- repoDir: the directory containing all repos 
-doWork :: FilePath -> [NixFile] -> DoWorkAction -> [String] -> IO ()
-doWork repoDir nixFiles' cmd args = do
-        let doWorkOnItem :: FilePath -> Item -> IO Item
-            doWorkOnItem _ i@(IStr _) = return i
-            doWorkOnItem path' (IRegion region') = do
-              let ir@(IRegionData _ _ cont _ reg') = region'
-              res <- runErrorT $ (action reg') ir path' cmd args repoDir
-              newC <- either (\s -> warning s >> return cont ) return res
-              return $ IRegion $ ir{ rContents = newC }
+doWork :: Config
+        -> Int -- numCores
+        -> [FilePath]  --  .nix files to process
+        -> DoWorkAction -- actions to be taken on
+        -> [String]   --  names or group names
+        -> IO ()
+doWork cfg numCores nixFiles' requestedActions args = do
+        let -- should region be updated ?
+            select reg =
+              let names = [regionName reg] ++ words (fromMaybe "" (M.lookup "groups" (rOpts reg)))
+              in any (`elem` args) names
 
-            doWorkOnFile (NixFile path' items) = do
-                items' <- mapM (doWorkOnItem path') items
-                when (items' /= items) $ writeNixFile $ NixFile path' items'
-            
-        mapM_ doWorkOnFile nixFiles'
+        tmpDir <- newTempdir "nix-repository-manager-tmp-"
+        print $ "tmp dir is: " ++ tmpDir
+
+        putStr "parsing nix files .. "
+        parsed <- mapM parseFileStrict nixFiles'
+        putStrLn "done"
+
+        nixFiles'' <- newMVar parsed
+
+        --  affected regions:
+        let regions'' = filter select $ concatMap nixFileRegions parsed
+
+        -- if repo names are the same repo data must be the same as well
+        let badDups a = let l = nubBy ((==) `on` rOpts) a 
+                        in case l of
+                            [i] -> Right i
+                            _ -> Left l
+        let (bad, good) = M.mapEither badDups $ M.fromListWith (++) [ ((sStart r, regionName r), [r]) | r <- regions'' ]
+        when (not (M.null bad)) $ error $ "found multiple declarations for names " ++ show (M.keys bad) ++ " differing in options"
 
 
+        -- run actions
+        -- publishing (uploading) usually depends less on network latencies thus using one process only
+        putStrLn $ "cores setting: " ++ (show numCores)
+        results <- runConcurrently (M.fromList [(TTFetch, numCores), (TTPublish, 1)])
+                        forkIO printProgress
+                        (map (createTask cfg tmpDir nixFiles'' requestedActions) (M.elems good))
+        results' <- takeMVar results
+        mapM_ print results'
+        when (any (either (const True) (const False)) results') $ exitWith $ ExitFailure 1
+        
+
+{-
+snippet = error "TODO snippet command"
 snippet :: String -> IO ()
 snippet options = mapM_ showSnippet allRegions
   where showSnippet reg' = 
           putStrLn $ unlines $ map ("    " ++)
                           [ BS.unpack (regStart reg') ++ ": " ++ options
                           , BS.unpack (regEnd reg') ]
-  
 
 g = "[ groups = \"group1 group2\"; ]"
 
@@ -149,19 +260,23 @@ printSnippet "cvs" = snippet $ "{ name=\"?\"; type=\"cvs\"; cvsRoot=\"...\"; mod
 printSnippet "bzr" = snippet $ "{ name=\"?\"; type=\"bzr\"; url=\"...\"; "++g++" }"
 printSnippet "darcs" = snippet $ "{ name=\"?\"; type=\"darcs\"; url=\"...\"; "++g++" }"
 printSnippet _ = error "in print snippet" -- should never occur 
+-}
 
 main :: IO ()
 main = do
   args <- getArgs 
+  config <- readConfig
   case args of
-    ["--snippet", typ] -> printSnippet typ
-    (dir:rest) -> do
-      parsed <- liftM (map snd) $ parseNixFiles dir
+    -- ["--snippet", typ] -> printSnippet typ
+    (numCores:dir:rest) -> do
+      files <- nixFiles dir
+      -- TODO get value from ~/.nix-profile/config.nix
       repoDir <- getEnv "NIX_REPOSITORY_MANAGER_REPO_DIR"
       when (null repoDir) $ error "set env var NIX_REPOSITORY_MANAGER_REPO_DIR to your managedRepoDir, please!"
-      let doWork' = doWork repoDir parsed
+      let doWork' = doWork config (read numCores) files
       case rest of
         ["--stats"] -> do
+           parsed <- mapM parseFileStrict files
            let (names, groups) = namesAndGroups parsed
            putStrLn $ "files: " ++ show (length parsed)
            putStrLn $ "found sections: " ++ (show . sum) (map (length . regions) parsed)

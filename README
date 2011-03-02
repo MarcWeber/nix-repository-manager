@@ -1,3 +1,68 @@
+nix-repository-manager3
+=======================
+
+purpose: fetch contents and inject them into .nix files.
+The only content implementation are version control system snapshots right now
+
+it looks like this
+
+# REGION NAME: { region options in nix attrs format }
+  CONTENTS
+# END
+
+The most common use cases are:
+
+  mkDerivation {
+    # REGION AUTO UPDATE: { name = "library"; [ .. git,hg,mercurial, .. ]; }
+      name = "library-git-x3454"
+      src = fetchurl { ... }
+    # END
+
+    // manually coded buildInputs, meta, and more attr names
+  }
+
+however for nixpkgs-{haskell,ruby}-overlay the contents are more complicated
+because dependencies are extracted from .cabal or .gem files automatically
+
+usage:
+nix-repository-manager 1 . --update names_or_group_names
+1 is the numbe of parallel VCS actions
+
+Instead of --update you can also use --update-then-publish or --publish
+the publish action will upload the snapshot file using rsync
+
+You have to create a ~/.nix-repository-manager file having three lines:
+
+  FORMAT:0.0
+  #MIRROR
+  http://your-host.com/path/
+  #UPLOAD
+  ["rsync","-cs","--progress","--inplace", "FILE", "user@your-host.com:/path"]
+  #MANAGED_DIRECTORY
+  ~/managed-repos/
+
+FILE will be replaced by the snapshot file
+
+
+You have to override fetchurl and substitute the first part of the url in order
+to use the local files.
+
+TROUBLE?
+==========
+Some operations such as svn or darcs require some minimal setup such as
+defining a user accepting a remote host. You may have to run the checkout
+manually the first time to reply to those questions
+
+implementation details:
+=======================
+  important files
+  managed repo dir contains
+    ./dist
+    ./dist/NAME.{tar.bz2,.gem,..} the snapshot
+
+OUTDATED - TODO - If you read this ping me to fix it - (somewhat historical) 
+========================
+
 nix-repository-manager2
 =======================
 
