@@ -90,6 +90,9 @@ printUsage = do
     , ""
     , ""
     , "  BUGS: maybe I should have used another language.."
+    , "  "
+    , "  "
+    , "  If something went wrong you may have to export FORCE_REGION_UPDATE=1 to rewrite a region"
     ]
 
 -- ========== helper functions ======================================= 

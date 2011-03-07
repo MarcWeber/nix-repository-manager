@@ -42,11 +42,13 @@ createTarBz2 cfg reg rev = addErrorContext "createTarBz2" $ do
   let (repoDir :: String) = (cfgRepoDir cfg) </> name
   sf <- sourceFiles r repoDir
 
+  --  can't use packPaths because top dir nix_repository_manager is prefixed
   entries <- mapM (\p -> do
     let x = "nix_repository_manager" </> p
     let s = repoDir </> p
     isd <- doesDirectoryExist s
-    packFileEntry s (either error id (toTarPath isd x))
+    let p = if isd then packDirectoryEntry else packFileEntry
+    p s (either error id (toTarPath isd x))
     ) sf
   BS.writeFile destFile $ compress $ Tar.write entries
   return snapshotName

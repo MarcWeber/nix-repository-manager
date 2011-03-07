@@ -30,6 +30,9 @@ printProgress change _ label finished_c running_c to_be_run_c =
   in printf "==> %s %s  %d of %d  %.2f %% running: %d\n" action (show label) to_be_run_c total (((/) `on` fi) (100 * (total - to_be_run_c)) total) running_c
 
 
+-- tt = task type
+-- label = string describing running task
+-- r = result of task
 data Task tt label r = Task tt label ((Task tt label r -> IO ()) -> IO r)
 
 -- run tasks concurrently. By using task types you can specify that eg 2
