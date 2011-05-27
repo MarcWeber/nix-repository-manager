@@ -1,7 +1,10 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 module Implementations where
+import System.Time
+import System.IO.Unsafe (unsafeInterleaveIO)
 import qualified Codec.Archive.Tar as Tar
 import qualified Data.ByteString.Lazy as BS
+import qualified Data.ByteString as BSS
 import Codec.Archive.Tar.Entry
 import Data.Maybe
 import qualified Data.Map as M
@@ -33,6 +36,27 @@ source cfg file snapshotName = addErrorContext "source" $ do
     hash <- createHash file Sha256 (file ++ ".sha256")
     return $ "(fetchurl { url = \"" ++ cfgUrl cfg ++ snapshotName ++ "\"; sha256 = \"" ++ hash ++ "\"; })"
 
+getModTime :: FilePath -> IO EpochTime
+getModTime path = do
+  (TOD s _) <- getModificationTime path
+  return $! fromIntegral s
+
+-- strict version of packFileEntry2. Else too many open files *sick*
+packFileEntry2 :: FilePath -- ^ Full path to find the file on the local disk
+              -> TarPath  -- ^ Path to use for the tar Entry in the archive
+              -> IO Entry
+packFileEntry2 filepath tarpath = do
+  mtime   <- getModTime filepath
+  perms   <- getPermissions filepath
+  file    <- openBinaryFile filepath ReadMode
+  size    <- hFileSize file
+  content <- liftM (BS.fromChunks.(:[])) $ BSS.hGetContents file
+  return (simpleEntry tarpath (NormalFile content (fromIntegral size))) {
+    entryPermissions = if executable perms then executableFilePermissions
+                                           else ordinaryFilePermissions,
+    entryTime = mtime
+  }
+
 createTarBz2 :: Config -> IRegionData -> String -> IO String -- basename of snapshot file
 createTarBz2 cfg reg rev = addErrorContext "createTarBz2" $ do
   let name = regionName reg
@@ -47,7 +71,7 @@ createTarBz2 cfg reg rev = addErrorContext "createTarBz2" $ do
     let x = "nix_repository_manager" </> p
     let s = repoDir </> p
     isd <- doesDirectoryExist s
-    let p = if isd then packDirectoryEntry else packFileEntry
+    let p = if isd then packDirectoryEntry else packFileEntry2
     p s (either error id (toTarPath isd x))
     ) sf
   BS.writeFile destFile $ compress $ Tar.write entries
@@ -158,7 +182,7 @@ gemImpl _ rev cfg reg = do
             [line] -> do
 
                  let gemFile = thisRepo </> drop (length p) line
-                 let gemVersion =  (takeWhile (/= '-')) . drop (length ".gem") $ reverse gemFile
+                 let gemVersion = reverse . (takeWhile (/= '-')) . drop (length ".gem") $ reverse gemFile
                  let snapshotName = (name ++ "-" ++ gemVersion) ++ suffix ++ ".gem"
                  writeFile snapshotFileCache snapshotName
                  let target = distDir </> snapshotName

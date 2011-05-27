@@ -1,6 +1,8 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 module Util where
+import GHC.MVar
 import Types
+import Control.Concurrent
 import Data.Char
 import Data.List
 import Control.Exception as E
@@ -53,20 +55,21 @@ runInteractiveProcess' :: FilePath
 runInteractiveProcess' cmd args mb_cwd mb_env f = do
   putStrLn $ "running: " ++ (show (cmd:args)) ++ " in " ++ (show mb_cwd)
   (i,o,e,p) <- runInteractiveProcess cmd args mb_cwd mb_env
-  r <- f (i,o,e)
+  r <- newEmptyMVar
+  forkIO $ putMVar r =<< f (i,o,e)
   ec <- waitForProcess p
   case ec of
-    ExitSuccess -> return r
+    ExitSuccess -> readMVar r
     ExitFailure e' -> error $ "command " ++ cmd ++ " " ++ show args ++ " failed with " ++ (show e')
 
 findExecutable' :: [Char] -> IO FilePath
 findExecutable' n = liftM (fromMaybe (error $ n ++ " not found in path")) $ findExecutable n
 
+fseqM [] = return [] 
+fseqM xs = last xs `seq` return xs
+
 readFileStrict :: FilePath -> IO String
-readFileStrict fp = do
-    let fseqM [] = return [] 
-        fseqM xs = last xs `seq` return xs
-    fseqM =<< readFile fp
+readFileStrict fp = fseqM =<< readFile fp
 
 data HashType = Sha256 | MD5
   deriving (Read)
@@ -155,3 +158,6 @@ getDirectoryContentsRecursive topdir = recurseDirectories [""]
 
 addErrorContext :: String -> IO a -> IO a
 addErrorContext s = handle (\(e::SomeException) -> putStrLn ("while " ++ s) >> throw e)
+
+hGetContentsStrict h = fseqM =<< hGetContents h
+  

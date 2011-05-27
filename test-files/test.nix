@@ -3,7 +3,7 @@
     autoUpdateImpl = {
       # REGION AUTO UPDATE: { name="vim-addon-nix"; type="git"; url="git://github.com/MarcWeber/vim-addon-nix.git"; groups = "test"; }
       src = (fetchurl { url = "http://mawercer.de/~nix/reposvim-addon-nix-git-e204f.tar.bz2"; sha256 = "b6c0d6bb0f1c887e00f3817683ab7695b6011e9a9caad5034987445da365171a"; });
-      name = vim-addon-nix-git-e204f;
+      name = "vim-addon-nix-git-e204f";
       # END
     };
 
@@ -19,7 +19,7 @@
           developmentDependencies = [  ];
           runtimeDependencies = [  ];
           dependencies =        [  ];
-          src = (fetchurl { url = "http://mawercer.de/~nix/reposnixpkgs-ruby-overlay-gem-plugin-2.0-git-2366f.gem"; sha256 = "b9a28ebd26f80e660647230ae4f464f7be4c000205cd528c051163702a250e72"; });
+          src = (fetchurl { url = "http://mawercer.de/~nix/reposnixpkgs-ruby-overlay-gem-plugin-2.0-git-2366f.gem"; sha256 = "2a7f51cd137b0eca51f4a3e6376633ba1a51d182c5c5e89d585f7016d26e35d9"; });
           meta = {
             homepage = "http://gitorious.org/nixpkgs-ruby-overlay/nixpkgs-ruby-overlay-gem-plugin";
             license = []; # one of ?

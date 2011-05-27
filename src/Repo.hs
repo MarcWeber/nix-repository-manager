@@ -286,7 +286,7 @@ instance Repo CVSRepoData where
 -- git implementation 
 instance Repo GitRepoData where
   sourceFiles _ p = do
-    files <- runInteractiveProcess' "git" ["ls-files"] (Just p) Nothing $ \(_,o,_) -> hGetContents o
+    files <- runInteractiveProcess' "git" ["ls-files"] (Just p) Nothing $ \(_,o,_) -> hGetContentsStrict o
     return $ filter (/= ".") $ lines files
 
   nameSuffix _ rev = "-git-" ++ take 5 rev
