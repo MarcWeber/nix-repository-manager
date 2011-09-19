@@ -296,13 +296,13 @@ instance Repo GitRepoData where
     return $ GitRepoData url mbBranch
   repoGet (GitRepoData url mbBranch) dest = do
     removeDirectory dest -- I guess git wants to create the directory itself 
-    ec <- rawSystemVerbose "git" ["clone", "--depth" ,"1" , url, dest] Nothing
-    case ec of
-      ExitFailure _ -> return ec
-      -- if branch is given switch to it and setup remote tracking 
-      _ -> case mbBranch of
-          Just branch -> rawSystemVerbose "git" ["checkout", "-tb", branch, "origin/" ++ branch ] (Just dest)
-          _ -> return ExitSuccess
+    rawSystemVerbose "git" (["clone"] ++ (maybe [] (\b -> ["-b", b]) mbBranch) ++ [ "--depth" ,"1" , url, dest]) Nothing
+    -- case ec of
+    --   ExitFailure _ -> return ec
+    --   -- if branch is given switch to it and setup remote tracking 
+    --   _ -> case mbBranch of
+    --       Just branch -> rawSystemVerbose "git" ["checkout", "-tb", branch, "origin/" ++ branch ] (Just dest)
+    --       _ -> return ExitSuccess
 
   repoUpdate (GitRepoData _ _) dest =
     rawSystemVerbose "git" [ "pull"] (Just dest)
