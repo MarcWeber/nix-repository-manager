@@ -13,7 +13,7 @@ it looks like this
 The most common use cases are:
 
   mkDerivation {
-    # REGION AUTO UPDATE: { name = "library"; [ .. git,hg,mercurial, .. ]; }
+    # REGION AUTO UPDATE: { name = "library"; [ .. git,hg,mercurial, .. ]; [fields = "src name"] }
       name = "library-git-x3454"
       src = fetchurl { ... }
     # END
