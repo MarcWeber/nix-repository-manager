@@ -127,10 +127,6 @@ warning = hPutStrLn stderr
 -- map regions to tasks and run them in parallel
 createTask :: Config -> FilePath -> MVar [NixFile] -> DoWorkAction -> IRegionData -> Task TaskType String String
 createTask cfg tmpDir mv_nixfiles action reg = do
-      let regions' = [ ("# REGION AUTO UPDATE", autoUpdateImpl)
-                    , ("# REGION HACK_NIX"   , hackNixImpl)
-                    , ("# REGION GEM"        , gemImpl)
-                    ]
 
       let name = regionName reg
       let repoDir = cfgRepoDir cfg
@@ -139,20 +135,25 @@ createTask cfg tmpDir mv_nixfiles action reg = do
       let revFile = repoDir </> "dist" </> (name ++ ".rev")
       let distFileLocation = distDir </> name
 
-          impl = fromMaybe (error $ "unkown region :" ++ (BS.unpack (sStart reg)) ++ ", known regions: " ++ show (map fst regions')) $ lookup 
-                            (BS.unpack (sStart reg))
-                            regions'
+      let regions' = [ ("# REGION AUTO UPDATE", updateActionVCS autoUpdateImpl)
+                    , ("# REGION HACK_NIX"    , updateActionVCS hackNixImpl)
+                    , ("# REGION GEM"         , updateActionVCS gemImpl)
+                    -- , ("# REGION PYTHON_PKG"  , updateActionVCS pythonImpl)
+                    ]
 
           -- publish
           publish = do
-                  let prog = head $ cfgUpload cfg
-                      args file = map (\a -> if a == "FILE" then file else a) $ tail $ cfgUpload cfg
-                  file <- liftM (distDir </>) $ readFile distFileLocation
-                  runProcess' prog (args file) Nothing
-                  return $ "uploaded :" ++ name
+                    let prog = head $ cfgUpload cfg
+                        args file = map (\a -> if a == "FILE" then file else a) $ tail $ cfgUpload cfg
+                    file <- liftM (distDir </>) $ readFile distFileLocation
+                    runProcess' prog (args file) Nothing
+                    return $ "uploaded :" ++ name
 
-          -- update then maybe publish
-          update addTask alsoPublish  = do
+          --  1) update vcs repo
+          --  2) call implementation updating region
+          --  3) if publish is requested add new async task publishing source snapshot
+          updateActionVCS impl addTask alsoPublish = do
+
                   let r = fromMaybe (error "invalid repo specification") $ repoFromMap (rOpts reg)
 
                   de <- doesDirectoryExist thisRepo
@@ -190,6 +191,13 @@ createTask cfg tmpDir mv_nixfiles action reg = do
 
                   when alsoPublish $ addTask (Task TTPublish ("publishing " ++ name) (const publish))
                   return $ "updated: " ++ name ++ " " ++ oldRev ++ " -> " ++ rev
+
+          -- update then maybe publish
+          update addTask alsoPublish = do
+                  let updateAction = fromMaybe (error $ "unkown region :" ++ (BS.unpack (sStart reg)) ++ ", known regions: " ++ show (map fst regions')) $ lookup 
+                                              (BS.unpack (sStart reg))
+                                              regions'
+                  updateAction addTask alsoPublish
 
       Task TTFetch
            ("updating " ++ name)
