@@ -122,9 +122,9 @@ hackNixImpl tmpDir rev cfg reg = addErrorContext "hackNixImpl" $ do
     -- run hack-nix to create cabal description 
     contents <- do
         _ <- rawSystemVerbose "tar" ["xfj", distDir </> snapshotName, "--strip-components=1"] (Just tmp)
-        _ <- rawSystemVerbose "ghc" ["--make", "Setup.hs"] (Just tmp)
-
         setups <- liftM (head.fst) $ globDir [compile ("Setup*.hs")] thisRepo
+        _ <- rawSystemVerbose "ghc" ["--make", head setups] (Just tmp)
+
         _ <- rawSystemVerbose "ghc" ["--make", head setups] (Just tmp)
         mhn <- findExecutable "hack-nix"
         _ <- case mhn of
