@@ -284,6 +284,9 @@ main = do
       -- TODO get value from ~/.nix-profile/config.nix
       repoDir <- getEnv "NIX_REPOSITORY_MANAGER_REPO_DIR"
       when (null repoDir) $ error "set env var NIX_REPOSITORY_MANAGER_REPO_DIR to your managedRepoDir, please!"
+      let distDir = repoDir + "/dist"
+      de <- doesDirectoryExist distDir
+      when (!de) $ error $ "run  mkdir -p " ++ distDir ++ ", please!"
       let doWork' = doWork config (read numCores) files
       case rest of
         ["--stats"] -> do
