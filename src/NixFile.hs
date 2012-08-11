@@ -1,5 +1,11 @@
 {-# LANGUAGE CPP, ScopedTypeVariables #-}
 module NixFile where
+
+#ifdef USE_INTERLUDE
+#include "interlude.h"
+import Interlude
+#endif
+
 import qualified Data.Map as M
 import Data.Function
 import Control.Monad.Error

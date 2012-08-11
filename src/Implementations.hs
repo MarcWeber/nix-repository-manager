@@ -1,5 +1,11 @@
-{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE ScopedTypeVariables, CPP #-}
 module Implementations where
+
+#ifdef USE_INTERLUDE
+#include "interlude.h"
+import Interlude
+#endif
+
 import System.Time
 import System.IO.Unsafe (unsafeInterleaveIO)
 import qualified Codec.Archive.Tar as Tar
@@ -122,10 +128,13 @@ hackNixImpl tmpDir rev cfg reg = addErrorContext "hackNixImpl" $ do
     -- run hack-nix to create cabal description 
     contents <- do
         _ <- rawSystemVerbose "tar" ["xfj", distDir </> snapshotName, "--strip-components=1"] (Just tmp)
-        setups <- liftM (head.fst) $ globDir [compile ("Setup*.hs")] thisRepo
-        _ <- rawSystemVerbose "ghc" ["--make", head setups] (Just tmp)
+        print thisRepo
+        setups <- filterM doesFileExist $ map (thisRepo </>) ["Setup.hs","Setup.lhs"]
+        when (null setups) $ error "no Setup.*hs files found!"
+        let setup = (takeFileName . head) setups
+        _ <- rawSystemVerbose "ghc" ["--make", setup] (Just tmp)
 
-        _ <- rawSystemVerbose "ghc" ["--make", head setups] (Just tmp)
+        _ <- rawSystemVerbose "ghc" ["--make", setup] (Just tmp)
         mhn <- findExecutable "hack-nix"
         _ <- case mhn of
           Just hn -> rawSystemVerbose hn ["--to-nix"] (Just tmp)
