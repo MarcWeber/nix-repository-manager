@@ -66,6 +66,7 @@ data CVSRepoData = CVSRepoData String -- cvs root (eg :pserver:anonymous@synergy
 
 data GitRepoData = GitRepoData String -- URL, branch
                                (Maybe String) -- maybe branch name
+                               Bool -- shallow (defaults to true, eg code.google.com does not support shallow clones yet)
   deriving (Show,Read)
 
 data BZRRepoData = BZRRepoData String -- URL
@@ -293,10 +294,12 @@ instance Repo GitRepoData where
   parseFromConfig map' = do 
     url <- M.lookup "url" map'
     let mbBranch = M.lookup "branch" map'
-    return $ GitRepoData url mbBranch
-  repoGet (GitRepoData url mbBranch) dest = do
+    let mbShallow = M.lookup "shallow" map'
+
+    return $ GitRepoData url mbBranch (maybe True (/= "false") mbShallow)
+  repoGet (GitRepoData url mbBranch shallow) dest = do
     removeDirectory dest -- I guess git wants to create the directory itself 
-    rawSystemVerbose "git" (["clone"] ++ (maybe [] (\b -> ["-b", b]) mbBranch) ++ [ "--depth" ,"1" , url, dest]) Nothing
+    rawSystemVerbose "git" (["clone"] ++ (maybe [] (\b -> ["-b", b]) mbBranch) ++ (if shallow then ["--depth" ,"1" ] else []) ++ [ url, dest]) Nothing
     -- case ec of
     --   ExitFailure _ -> return ec
     --   -- if branch is given switch to it and setup remote tracking 
@@ -304,7 +307,7 @@ instance Repo GitRepoData where
     --       Just branch -> rawSystemVerbose "git" ["checkout", "-tb", branch, "origin/" ++ branch ] (Just dest)
     --       _ -> return ExitSuccess
 
-  repoUpdate (GitRepoData _ _) dest =
+  repoUpdate (GitRepoData _ _ _) dest =
     rawSystemVerbose "git" [ "pull"] (Just dest)
   revId _ fp = do
     git <- findExecutable' "git"
