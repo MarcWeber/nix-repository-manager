@@ -58,6 +58,7 @@ data DarcsRepoData = DarcsRepoData String -- URL
 
 data SVNRepoData = SVNRepoData String -- URL 
                                (Maybe String) -- revision / Nothing = HEAD 
+                               Bool -- --ignore-externals
   deriving (Show,Read)
 
 data CVSRepoData = CVSRepoData String -- cvs root (eg :pserver:anonymous@synergy2.cvs.sourceforge.net:/cvsroot/synergy2)
@@ -234,9 +235,17 @@ instance Repo SVNRepoData where
   nameSuffix _ rev = "-svn-" ++ rev
   parseFromConfig map' = do 
     url <- M.lookup "url" map'
-    return $ SVNRepoData url $ M.lookup "r" map'
-  repoGet (SVNRepoData url revision) dest =
-    rawSystemVerbose "svn" (["checkout", url] ++ (maybe ["-rHEAD"] (\r -> ["-r" ++ r]) revision) ++ [dest]) (Just dest)
+    return $ SVNRepoData url
+                         (M.lookup "r" map') 
+                         (maybe False (/= "false") (M.lookup "ignorne-externals" map'))
+  repoGet (SVNRepoData url revision ignoreExternals) dest =
+    rawSystemVerbose 
+      "svn" (
+          ["checkout", url] 
+          ++ (if ignoreExternals then ["--ignore-externals"] else [])
+          ++ (maybe ["-rHEAD"] (\r -> ["-r" ++ r]) revision) ++ [dest]
+      ) 
+      (Just dest)
   revId _ fp = do
     svn <- findExecutable' "svn"
     out <- runInteractiveProcess' svn ["info"] (Just fp) Nothing $ \(_,o,_) -> hGetContents o

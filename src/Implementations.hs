@@ -34,7 +34,7 @@ autoUpdateImpl, hackNixImpl, gemImpl ::
         String      -- tmpDir
         -> String   -- revId
         -> Config
-        -> IRegionData 
+        -> IRegionData
       -> IO [String] -- region contents without indentation
 
 source :: Config -> FilePath -> String -> IO String
@@ -87,7 +87,7 @@ createTarBz2 cfg reg rev = addErrorContext "createTarBz2" $ do
 -- source only - no fancy stuff
 autoUpdateImpl _ rev cfg reg = addErrorContext "autoUpdateImpl" $ do
     let name = regionName reg
-    let repoDir = (cfgRepoDir cfg) -- copied some lines below 
+    let repoDir = (cfgRepoDir cfg) -- copied some lines below
     let distDir = repoDir </> "dist"
     let snapshotFileCache = distDir </> name
     let fields = words $ M.findWithDefault "src name" "fields" (rOpts reg)
@@ -125,7 +125,7 @@ hackNixImpl tmpDir rev cfg reg = addErrorContext "hackNixImpl" $ do
     snapshotName <- createTarBz2 cfg reg rev
     writeFile snapshotFileCache snapshotName
 
-    -- run hack-nix to create cabal description 
+    -- run hack-nix to create cabal description
     contents <- do
         _ <- rawSystemVerbose "tar" ["xfj", distDir </> snapshotName, "--strip-components=1"] (Just tmp)
         print thisRepo
@@ -145,10 +145,10 @@ hackNixImpl tmpDir rev cfg reg = addErrorContext "hackNixImpl" $ do
         readFile file
 
     _ <- rawSystemVerbose "rm" ["-fr", tmp] Nothing
-  
+
     let contentsWithoutSource = takeWhile (not . ("sha256 =" `isPrefixOf`) . dropWhile isSpace) . lines $ contents
     src <- source cfg (distDir </> snapshotName) snapshotName
-        
+
     return $ contentsWithoutSource ++ [
               "  srcFile = " ++ src ++ ";"
             , "}"
@@ -159,7 +159,7 @@ hackNixImpl tmpDir rev cfg reg = addErrorContext "hackNixImpl" $ do
 gemImpl _ rev cfg reg = do
   let repoDir = cfgRepoDir cfg
   let name = regionName reg
-  let thisRepo = (cfgRepoDir cfg) </> name -- copied some lines below 
+  let thisRepo = (cfgRepoDir cfg) </> name -- copied some lines below
   let distDir = repoDir </> "dist"
   let snapshotFileCache = distDir </> name
 
@@ -170,19 +170,18 @@ gemImpl _ rev cfg reg = do
   -- build script putting ruby and gem in path:
   nixpkgsAll <- getEnv "NIXPKGS_ALL"
                   -- , last ist \n
-  storePath <- liftM init $ runInteractiveProcess' 
+  storePath <- liftM init $ runInteractiveProcess'
                     "nix-build"
                     ["--no-out-link", "-A","ro.simpleEnv",nixpkgsAll] -- TODO make this configurabel ro. is my ruby overlay you can biuld -A simpleEnv from nixpkgs-overlay-ruby/default.nix instead
                     Nothing Nothing $ \(_,o,_) -> hGetContents o
 
-  -- nixos must have multiple shells support script which fixes /etc/bashrc resetting PATH
   let rubyEnvScript = (storePath </> "bin" </> "ruby-env-simple")
 
   gemspecs <- liftM (head.fst) $ globDir [compile ("*.gemspec")] thisRepo
   case gemspecs of
     [] -> fail $ "no .gemspec file found in " ++ thisRepo
     [gemspecFile] -> do
-          out <- runInteractiveProcess' 
+          out <- runInteractiveProcess'
                       rubyEnvScript
                       ["gem", "build", gemspecFile]
                       (Just thisRepo) Nothing $ \(_,o,_) -> hGetContents o
@@ -200,9 +199,9 @@ gemImpl _ rev cfg reg = do
 
                  s <- source cfg target snapshotName
                  let src = s ++ ";"
-                 
+
                  -- ask to generate region text and cache result in file
-                 liftM lines $ runInteractiveProcess' 
+                 liftM lines $ runInteractiveProcess'
                       rubyEnvScript
                       ["gem", "nixpkgsoverlay", target, src]
                       (Just thisRepo) Nothing $ \(_,o,_) -> hGetContents o
