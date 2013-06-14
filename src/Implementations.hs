@@ -70,16 +70,19 @@ createTarBz2 cfg reg rev = addErrorContext "createTarBz2" $ do
   let snapshotName = name ++ nameSuffix r rev ++ ".tar.bz2"
   let destFile = (cfgRepoDir cfg) </> "dist" </> snapshotName
   let (repoDir :: String) = (cfgRepoDir cfg) </> name
+  let subdir = maybe [] splitDirectories (M.lookup "subdir" (rOpts reg))
+
   sf <- sourceFiles r repoDir
+  let filteredSF = filter (\s -> subdir `isPrefixOf` (splitDirectories s)) sf
 
   --  can't use packPaths because top dir nix_repository_manager is prefixed
   entries <- mapM (\p -> do
-    let x = "nix_repository_manager" </> p
+    let x = "nix_repository_manager" </> (joinPath . drop (length subdir) . splitPath $ p)
     let s = repoDir </> p
     isd <- doesDirectoryExist s
     let p = if isd then packDirectoryEntry else packFileEntry2
     p s (either error id (toTarPath isd x))
-    ) sf
+    ) filteredSF
   BS.writeFile destFile $ compress $ Tar.write entries
   return snapshotName
 
@@ -129,7 +132,7 @@ hackNixImpl tmpDir rev cfg reg = addErrorContext "hackNixImpl" $ do
     contents <- do
         _ <- rawSystemVerbose "tar" ["xfj", distDir </> snapshotName, "--strip-components=1"] (Just tmp)
         print thisRepo
-        setups <- filterM doesFileExist $ map (thisRepo </>) ["Setup.hs","Setup.lhs"]
+        setups <- filterM doesFileExist $ map (tmp </>) ["Setup.hs","Setup.lhs"]
         when (null setups) $ error "no Setup.*hs files found!"
         let setup = (takeFileName . head) setups
         _ <- rawSystemVerbose "ghc" ["--make", setup] (Just tmp)

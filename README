@@ -21,8 +21,8 @@ The most common use cases are:
     // manually coded buildInputs, meta, and more attr names
   }
 
-however for nixpkgs-{haskell,ruby}-overlay the contents are more complicated
-because dependencies are extracted from .cabal or .gem files automatically
+However for nixpkgs-{haskell,ruby}-overlay the contents are more complicated
+because dependencies are extracted from .cabal or .gem files automatically.
 
 usage:
 nix-repository-manager 1 . --update names_or_group_names
@@ -60,6 +60,11 @@ to use the local files.
             else args;
       in p.fetchurl newArgs;
   };
+
+
+SPECIAL NAMES
+===============
+subdir: only tar up a subdirectory of a repository
 
 TROUBLE?
 ==========

@@ -71,6 +71,7 @@ data GitRepoData = GitRepoData String -- URL, branch
   deriving (Show,Read)
 
 data BZRRepoData = BZRRepoData String -- URL
+                               String -- additional arguments such as -Ossl.cert_reqs=none separated by space
   deriving (Show,Read)
 
 data MercurialRepoData = MercurialRepoData String -- URL
@@ -330,20 +331,20 @@ instance Repo GitRepoData where
 
 -- bzr implementation 
 instance Repo BZRRepoData where
-  sourceFiles _ _ = do
-    error "bzr sourceFiles TODO"
-    -- files <- runInteractiveProcess' "git" ["ls-files"] Nothing Nothing $ \(_,o,_) -> hGetContents o
-    -- return $ filter (/= ".") $ lines files
+  sourceFiles _ p = do
+    files <- runInteractiveProcess' "bzr" ["ls","-R"] (Just p) Nothing $ \(_,o,_) -> hGetContents o
+    return $ filter (/= ".") $ lines files
 
 
   nameSuffix _ rev = "-bzr-" ++ rev
   parseFromConfig map' = do 
     url <- M.lookup "url" map'
-    return $ BZRRepoData url
-  repoGet (BZRRepoData url) dest = do
+    let args = M.lookup "args" map'
+    return $ BZRRepoData url (maybe "" id args)
+  repoGet (BZRRepoData url args) dest = do
     removeDirectory dest -- I guess bzr wants to create the directory itself 
-    rawSystemVerbose "bzr" ["branch", url, dest] Nothing
-  repoUpdate (BZRRepoData _) dest =
+    rawSystemVerbose "bzr" (["branch"] ++ words args ++ [url, dest]) Nothing
+  repoUpdate (BZRRepoData _ _) dest =
     rawSystemVerbose "bzr" [ "update"] (Just dest) -- TODO: fix url when it has changed 
   isRepoClean _ _ = do
     print "isRepoClean to be implemented for bzr, returning True"
